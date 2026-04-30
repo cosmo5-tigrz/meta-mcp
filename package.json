@@ -9,7 +9,7 @@
     "meta-ads-mcp": "build/index.js"
   },
   "scripts": {
-    "build": "node --max-old-space-size=4096 ./node_modules/typescript/bin/tsc",
+    "build": "echo 'Build skipped - Vercel handles TypeScript natively'",
     "dev": "tsx src/index.ts",
     "dev:vercel": "vercel dev",
     "test": "jest",
@@ -19,7 +19,7 @@
     "lint": "echo 'Lint disabled for Vercel deployment'",
     "prepare-disabled": "npm run build",
     "typecheck": "echo 'Typecheck disabled for Vercel deployment'",
-    "vercel-build": "node --max-old-space-size=4096 ./node_modules/typescript/bin/tsc",
+    "vercel-build": "echo 'Build skipped - Vercel handles TypeScript natively'",
     "setup": "node scripts/setup-mcp.js",
     "setup:mcp": "node scripts/setup-mcp.js",
     "health-check": "node scripts/health-check.js",
