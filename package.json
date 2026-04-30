@@ -1,6 +1,7 @@
 {
   "name": "meta-ads-mcp",
   "version": "1.7.0",
+  "packageManager": "pnpm@9.15.0",
   "description": "Model Context Protocol server for Meta Marketing API integration",
   "main": "build/index.js",
   "type": "module",
