@@ -19,7 +19,7 @@
     "lint": "echo 'Lint disabled for Vercel deployment'",
     "prepare-disabled": "npm run build",
     "typecheck": "echo 'Typecheck disabled for Vercel deployment'",
-    "vercel-build": "echo 'Build skipped - Vercel handles TypeScript natively'",
+    "vercel-build-disabled": "echo 'Build skipped - Vercel handles TypeScript natively'",
     "setup": "node scripts/setup-mcp.js",
     "setup:mcp": "node scripts/setup-mcp.js",
     "health-check": "node scripts/health-check.js",
