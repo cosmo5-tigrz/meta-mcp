@@ -2,7 +2,7 @@ import { VercelRequest, VercelResponse } from '@vercel/node';
 import { UserAuthManager } from '../src/utils/user-auth.js';
 
 // Mock testing endpoint - DO NOT USE IN PRODUCTION
-export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (process.env.NODE_ENV === 'production') {
     return res.status(404).json({ error: 'Not found' });
   }
@@ -12,7 +12,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   try {
-    // Create a mock user session for testing
     const mockUser = {
       userId: 'test_user_123',
       email: 'test@example.com',
@@ -23,7 +22,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       lastUsed: new Date(),
     };
 
-    // Store mock session
     await UserAuthManager.storeUserSession(mockUser);
     await UserAuthManager.storeUserTokens(mockUser.userId, {
       accessToken: 'mock_access_token_for_testing',
@@ -31,7 +29,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       scope: ['ads_management', 'ads_read'],
     });
 
-    // Generate session token
     const sessionToken = await UserAuthManager.createSessionToken(mockUser.userId);
 
     res.status(200).json({
