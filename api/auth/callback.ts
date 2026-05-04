@@ -1,4 +1,4 @@
-import { NextApiRequest, NextApiResponse } from "next";
+import { VercelRequest, VercelResponse } from '@vercel/node';
 import { UserAuthManager, UserSession } from "../../src/utils/user-auth.js";
 
 export default async function handler(
