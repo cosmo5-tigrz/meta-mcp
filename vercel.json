@@ -2,7 +2,7 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": null,
   "buildCommand": "echo 'no build'",
-  "ignoreCommand": "exit 1"
+  "ignoreCommand": "exit 1",
   "functions": {
     "api/mcp.ts": { "maxDuration": 60 },
     "api/auth/login.ts": { "maxDuration": 30 },
