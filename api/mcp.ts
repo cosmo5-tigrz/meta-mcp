@@ -2377,9 +2377,8 @@ const handler = async (req: Request) => {
       // Vercel adapter configuration
       basePath: "/api",
       maxDuration: 60,
-      verboseLogs: true,
     }
   )(req);
 };
 
-export { handler as GET, handler as POST };
+export default handler;
