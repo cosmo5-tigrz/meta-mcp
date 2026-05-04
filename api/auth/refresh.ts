@@ -1,13 +1,12 @@
 import { VercelRequest, VercelResponse } from '@vercel/node';
 import { UserAuthManager } from '../../src/utils/user-auth.js';
 
-export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
   try {
-    // Authenticate user
     const authHeader = req.headers.authorization;
     const user = await UserAuthManager.authenticateUser(authHeader);
 
@@ -19,7 +18,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       });
     }
 
-    // Attempt to refresh the user's tokens
     const refreshSuccess = await UserAuthManager.refreshUserToken(user.userId);
 
     if (!refreshSuccess) {
@@ -30,7 +28,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       });
     }
 
-    // Get updated token information
     const updatedTokens = await UserAuthManager.getUserTokens(user.userId);
 
     res.status(200).json({
