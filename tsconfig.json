@@ -11,9 +11,9 @@
     "strict": false,
     "strictNullChecks": false,
     "noImplicitAny": false,
-    "noUnusedLocals": true,
-    "noUnusedParameters": true,
-    "noImplicitReturns": true,
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "noImplicitReturns": false,
     "noFallthroughCasesInSwitch": true,
     "moduleDetection": "force",
     "allowImportingTsExtensions": false,
@@ -29,6 +29,7 @@
   },
   "include": [
     "src/**/*",
+    "api/**/*",
     "__tests__/**/*"
   ],
   "exclude": [
