@@ -1,4 +1,4 @@
-import { NextApiRequest, NextApiResponse } from 'next';
+import { VercelRequest, VercelResponse } from '@vercel/node';
 
 // Debug endpoint - DO NOT USE IN PRODUCTION
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
