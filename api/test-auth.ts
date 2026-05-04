@@ -1,4 +1,4 @@
-import { NextApiRequest, NextApiResponse } from 'next';
+import { VercelRequest, VercelResponse } from '@vercel/node';
 import { UserAuthManager } from '../src/utils/user-auth.js';
 
 // Mock testing endpoint - DO NOT USE IN PRODUCTION
