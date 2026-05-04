@@ -1,13 +1,12 @@
 import { VercelRequest, VercelResponse } from '@vercel/node';
 import { UserAuthManager } from '../../src/utils/user-auth.js';
 
-export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
   try {
-    // Authenticate user
     const authHeader = req.headers.authorization;
     const user = await UserAuthManager.authenticateUser(authHeader);
 
@@ -19,14 +18,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       });
     }
 
-    // Delete user session and tokens
     await UserAuthManager.deleteUserData(user.userId);
-
-    // Clear session cookie
     res.setHeader('Set-Cookie', [
-      `session_token=; HttpOnly; Secure; SameSite=Strict; Max-Age=0; Path=/`, // Clear session cookie
+      `session_token=; HttpOnly; Secure; SameSite=Strict; Max-Age=0; Path=/`,
     ]);
-
     res.status(200).json({
       success: true,
       message: 'Successfully logged out. Your tokens and session data have been deleted.'
