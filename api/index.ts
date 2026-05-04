@@ -1,4 +1,4 @@
-import { NextApiRequest, NextApiResponse } from "next";
+import { VercelRequest, VercelResponse } from '@vercel/node';
 
 export default function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== "GET") {
