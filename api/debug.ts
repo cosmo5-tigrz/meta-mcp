@@ -1,7 +1,7 @@
 import { VercelRequest, VercelResponse } from '@vercel/node';
 
 // Debug endpoint - DO NOT USE IN PRODUCTION
-export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (process.env.NODE_ENV === 'production') {
     return res.status(404).json({ error: 'Not found' });
   }
@@ -11,7 +11,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   try {
-    // Check environment variables
     const envCheck = {
       META_APP_ID: !!process.env.META_APP_ID,
       META_APP_SECRET: !!process.env.META_APP_SECRET,
@@ -21,7 +20,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       KV_REST_API_URL: !!process.env.KV_REST_API_URL,
     };
 
-    // Generate test auth URL
     let testAuthUrl = null;
     if (process.env.META_APP_ID && process.env.META_REDIRECT_URI) {
       const params = new URLSearchParams({
@@ -34,7 +32,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       testAuthUrl = `https://www.facebook.com/v23.0/dialog/oauth?${params.toString()}`;
     }
 
-    // Test storage connection
     let storageTest = 'not_tested';
     try {
       if (process.env.REDIS_URL) {
@@ -64,7 +61,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         common_issues: [
           'META_REDIRECT_URI in Meta app must exactly match the one shown above',
           'Meta app must be in Live mode or you must be a test user',
-          'Don\'t access /api/auth/callback directly - it\'s only for Meta redirects'
+          "Don't access /api/auth/callback directly - it's only for Meta redirects"
         ]
       }
     });
