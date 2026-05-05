@@ -453,6 +453,7 @@ export class MetaApiClient {
       time_range?: { since: string; until: string };
       fields?: string[];
       breakdowns?: string[];
+      action_attribution_windows?: string[];
       limit?: number;
       after?: string;
     } = {}

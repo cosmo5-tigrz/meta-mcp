@@ -18,6 +18,7 @@ export function registerOAuthTools(
   // Generate OAuth Authorization URL Tool
   server.tool(
     "generate_auth_url",
+    "Generate a Meta OAuth authorization URL to start the authentication flow",
     GenerateAuthUrlSchema.shape,
     async ({ scopes, state }) => {
       try {
@@ -67,6 +68,7 @@ export function registerOAuthTools(
   // Exchange Authorization Code for Token Tool
   server.tool(
     "exchange_code_for_token",
+    "Exchange a Meta OAuth authorization code for an access token",
     ExchangeCodeSchema.shape,
     async ({ code }) => {
       try {
@@ -122,6 +124,7 @@ export function registerOAuthTools(
   // Refresh to Long-Lived Token Tool
   server.tool(
     "refresh_to_long_lived_token",
+    "Exchange a short-lived token for a long-lived Meta access token (~60 days)",
     RefreshTokenSchema.shape,
     async ({ short_lived_token }) => {
       try {
@@ -181,6 +184,7 @@ export function registerOAuthTools(
   // Generate System User Token Tool
   server.tool(
     "generate_system_user_token",
+    "Generate a system user access token for server-to-server automation",
     GenerateSystemTokenSchema.shape,
     async ({ system_user_id, scopes, expiring_token }) => {
       try {
@@ -243,7 +247,7 @@ export function registerOAuthTools(
   );
 
   // Get Token Info Tool
-  server.tool("get_token_info", {}, async () => {
+  server.tool("get_token_info", "Get details and status of the current Meta access token", {}, async () => {
     try {
       const tokenInfo = await authManager.getTokenInfo();
 
@@ -290,7 +294,7 @@ export function registerOAuthTools(
   });
 
   // Validate Current Token Tool
-  server.tool("validate_token", {}, async () => {
+  server.tool("validate_token", "Validate the current Meta access token and check its permissions", {}, async () => {
     try {
       const isValid = await authManager.validateToken();
       const tokenInfo = await authManager.getTokenInfo();

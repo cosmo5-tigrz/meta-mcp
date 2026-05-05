@@ -379,6 +379,16 @@ export const GetInsightsSchema = z.object({
     .array(z.string())
     .optional()
     .describe("Breakdown dimensions (e.g., age, gender, placement)"),
+  attribution_windows: z
+    .array(
+      z.enum([
+        "1d_click", "7d_click", "28d_click",
+        "1d_view", "7d_view", "28d_view",
+        "default",
+      ])
+    )
+    .optional()
+    .describe("Attribution windows to use for conversion metrics"),
   limit: z
     .number()
     .min(1)

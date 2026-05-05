@@ -21,6 +21,7 @@ export function registerAnalyticsTools(
   // Get Insights Tool
   server.tool(
     "get_insights",
+    "Retrieve performance insights for a campaign, ad set, or ad",
     GetInsightsSchema.shape,
     async ({
       object_id,
@@ -29,6 +30,7 @@ export function registerAnalyticsTools(
       time_range,
       fields,
       breakdowns,
+      attribution_windows,
       limit,
     }) => {
       try {
@@ -51,6 +53,10 @@ export function registerAnalyticsTools(
 
         if (breakdowns && breakdowns.length > 0) {
           params.breakdowns = breakdowns;
+        }
+
+        if (attribution_windows && attribution_windows.length > 0) {
+          params.action_attribution_windows = attribution_windows;
         }
 
         const result = await metaClient.getInsights(object_id, params);
@@ -127,6 +133,7 @@ export function registerAnalyticsTools(
   // Compare Performance Tool
   server.tool(
     "compare_performance",
+    "Compare performance metrics across multiple campaigns, ad sets, or ads",
     ComparePerformanceSchema.shape,
     async ({ object_ids, level, date_preset, time_range, metrics }) => {
       try {
@@ -224,6 +231,7 @@ export function registerAnalyticsTools(
   // Export Insights Tool
   server.tool(
     "export_insights",
+    "Export insights data in CSV or JSON format",
     ExportInsightsSchema.shape,
     async ({
       object_id,
@@ -314,6 +322,7 @@ export function registerAnalyticsTools(
   // Get Campaign Performance Tool (simplified version of get_insights)
   server.tool(
     "get_campaign_performance",
+    "Get a simplified performance summary for a campaign",
     GetInsightsSchema.shape,
     async (params) => {
       try {
@@ -386,6 +395,7 @@ export function registerAnalyticsTools(
   // Get Attribution Data Tool
   server.tool(
     "get_attribution_data",
+    "Get attribution data with conversion breakdowns for a campaign or ad",
     GetInsightsSchema.shape,
     async (params) => {
       try {

@@ -21,6 +21,7 @@ export function registerAudienceTools(
   // List Audiences Tool
   server.tool(
     "list_audiences",
+    "List custom and lookalike audiences for an ad account",
     ListAudiencesSchema.shape,
     async ({ account_id, type, limit, after }) => {
       try {
@@ -91,6 +92,7 @@ export function registerAudienceTools(
   // Create Custom Audience Tool
   server.tool(
     "create_custom_audience",
+    "Create a custom audience from customer data or engagement rules",
     CreateCustomAudienceSchema.shape,
     async ({
       account_id,
@@ -164,6 +166,7 @@ export function registerAudienceTools(
   // Create Lookalike Audience Tool
   server.tool(
     "create_lookalike_audience",
+    "Create a lookalike audience based on an existing custom audience",
     CreateLookalikeAudienceSchema.shape,
     async ({
       account_id,
@@ -248,6 +251,7 @@ export function registerAudienceTools(
   // Estimate Audience Size Tool
   server.tool(
     "estimate_audience_size",
+    "Estimate the reach and size of a potential audience given targeting parameters",
     EstimateAudienceSizeSchema.shape,
     async ({ account_id, targeting, optimization_goal }) => {
       try {
@@ -313,6 +317,7 @@ export function registerAudienceTools(
   // Update Audience Tool (for custom audiences)
   server.tool(
     "update_custom_audience",
+    "Update metadata (name, description, retention) for an existing custom audience",
     CreateCustomAudienceSchema.shape,
     async ({ name, description, retention_days }) => {
       try {
@@ -360,7 +365,7 @@ export function registerAudienceTools(
   );
 
   // Delete Audience Tool
-  server.tool("delete_audience", ListAudiencesSchema.shape, async () => {
+  server.tool("delete_audience", "Permanently delete a custom audience from an ad account", ListAudiencesSchema.shape, async () => {
     try {
       // Note: This would require an audience_id parameter in a real implementation
       const response = {
@@ -398,6 +403,7 @@ export function registerAudienceTools(
   // Get Audience Insights Tool
   server.tool(
     "get_audience_insights",
+    "Get demographic and behavioral insights for a given audience targeting",
     EstimateAudienceSizeSchema.shape,
     async ({ targeting }) => {
       try {
