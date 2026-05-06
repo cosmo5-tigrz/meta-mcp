@@ -2,6 +2,45 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { MetaApiClient } from "../meta-client.js";
 
+const CreateAdSchema = z.object({
+  account_id: z.string().describe("Meta Ad Account ID (without act_ prefix)"),
+  name: z.string().describe("Name of the ad"),
+  adset_id: z.string().describe("ID of the parent ad set"),
+  creative_id: z.string().describe("ID of the ad creative to use"),
+  status: z.enum(["ACTIVE", "PAUSED"]).optional().describe("Initial status of the ad (default: PAUSED)"),
+});
+
+const UpdateAdSetSchema = z.object({
+  adset_id: z.string().describe("ID of the ad set to update"),
+  name: z.string().optional().describe("New name for the ad set"),
+  status: z.enum(["ACTIVE", "PAUSED"]).optional().describe("New status"),
+  daily_budget: z.number().optional().describe("New daily budget in cents (e.g. 5000 = 50€)"),
+  lifetime_budget: z.number().optional().describe("New lifetime budget in cents"),
+  end_time: z.string().optional().describe("New end date in ISO 8601 format"),
+  bid_amount: z.number().optional().describe("New bid amount in cents"),
+});
+
+const UpdateAdSchema = z.object({
+  ad_id: z.string().describe("ID of the ad to update"),
+  name: z.string().optional().describe("New name for the ad"),
+  status: z.enum(["ACTIVE", "PAUSED", "ARCHIVED"]).optional().describe("New status"),
+  creative_id: z.string().optional().describe("ID of a new creative to swap in"),
+});
+
+const BulkUpdateAdSetsBudgetSchema = z.object({
+  updates: z.array(
+    z.object({
+      adset_id: z.string().describe("Ad set ID"),
+      daily_budget: z.number().describe("New daily budget in cents"),
+    })
+  ).describe("List of ad set budget updates"),
+});
+
+const GetPixelStatsSchema = z.object({
+  account_id: z.string().describe("Meta Ad Account ID (without act_ prefix)"),
+  date_preset: z.enum(["last_7d", "last_14d", "last_30d"]).optional().describe("Analysis period (default: last_7d)"),
+});
+
 export function registerAdsTools(
   server: McpServer,
   metaClient: MetaApiClient
@@ -10,13 +49,7 @@ export function registerAdsTools(
   server.tool(
     "create_ad",
     "Create an individual ad by linking an ad set and a creative. The ad will be created in PAUSED status by default. Requires a valid ad set ID and creative ID. Returns the new ad ID.",
-    {
-      account_id: z.string().describe("Meta Ad Account ID (without act_ prefix)"),
-      name: z.string().describe("Name of the ad"),
-      adset_id: z.string().describe("ID of the parent ad set"),
-      creative_id: z.string().describe("ID of the ad creative to use"),
-      status: z.enum(["ACTIVE", "PAUSED"]).optional().describe("Initial status of the ad (default: PAUSED)"),
-    },
+    CreateAdSchema.shape,
     async ({ account_id, name, adset_id, creative_id, status = "PAUSED" }) => {
       try {
         const result = await metaClient.createAd(account_id, {
@@ -50,15 +83,7 @@ export function registerAdsTools(
   server.tool(
     "update_adset",
     "Update an existing ad set. Modify its name, status, daily budget, targeting, or end date. Only the provided fields will be updated. Use this to adjust targeting or budget without recreating the ad set.",
-    {
-      adset_id: z.string().describe("ID of the ad set to update"),
-      name: z.string().optional().describe("New name for the ad set"),
-      status: z.enum(["ACTIVE", "PAUSED"]).optional().describe("New status"),
-      daily_budget: z.number().optional().describe("New daily budget in cents (e.g. 5000 = 50€)"),
-      lifetime_budget: z.number().optional().describe("New lifetime budget in cents"),
-      end_time: z.string().optional().describe("New end date in ISO 8601 format"),
-      bid_amount: z.number().optional().describe("New bid amount in cents"),
-    },
+    UpdateAdSetSchema.shape,
     async ({ adset_id, name, status, daily_budget, lifetime_budget, end_time, bid_amount }) => {
       try {
         const updates: Record<string, string | number> = {};
@@ -79,15 +104,13 @@ export function registerAdsTools(
 
         await metaClient.updateAdSet(adset_id, updates);
 
-        const response = {
-          success: true,
-          adset_id,
-          message: `Ad set ${adset_id} updated successfully`,
-          updates_applied: updates,
-        };
-
         return {
-          content: [{ type: "text", text: JSON.stringify(response, null, 2) }],
+          content: [{ type: "text", text: JSON.stringify({
+            success: true,
+            adset_id,
+            message: `Ad set ${adset_id} updated successfully`,
+            updates_applied: updates,
+          }, null, 2) }],
         };
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : "Unknown error occurred";
@@ -103,12 +126,7 @@ export function registerAdsTools(
   server.tool(
     "update_ad",
     "Update an existing ad. Change its name, status, or swap the creative. Only provided fields are updated.",
-    {
-      ad_id: z.string().describe("ID of the ad to update"),
-      name: z.string().optional().describe("New name for the ad"),
-      status: z.enum(["ACTIVE", "PAUSED", "ARCHIVED"]).optional().describe("New status"),
-      creative_id: z.string().optional().describe("ID of a new creative to swap in"),
-    },
+    UpdateAdSchema.shape,
     async ({ ad_id, name, status, creative_id }) => {
       try {
         const updates: Record<string, unknown> = {};
@@ -126,15 +144,13 @@ export function registerAdsTools(
 
         await metaClient.updateAd(ad_id, updates);
 
-        const response = {
-          success: true,
-          ad_id,
-          message: `Ad ${ad_id} updated successfully`,
-          updates_applied: updates,
-        };
-
         return {
-          content: [{ type: "text", text: JSON.stringify(response, null, 2) }],
+          content: [{ type: "text", text: JSON.stringify({
+            success: true,
+            ad_id,
+            message: `Ad ${ad_id} updated successfully`,
+            updates_applied: updates,
+          }, null, 2) }],
         };
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : "Unknown error occurred";
@@ -150,14 +166,7 @@ export function registerAdsTools(
   server.tool(
     "bulk_update_adsets_budget",
     "Update the daily budget of multiple ad sets in a single command. Useful for batch optimization — e.g. cutting budget on underperformers or scaling winners. Returns a summary of successes and failures.",
-    {
-      updates: z.array(
-        z.object({
-          adset_id: z.string().describe("Ad set ID"),
-          daily_budget: z.number().describe("New daily budget in cents"),
-        })
-      ).describe("List of ad set budget updates"),
-    },
+    BulkUpdateAdSetsBudgetSchema.shape,
     async ({ updates }) => {
       const results: Array<{ adset_id: string; status: string; error?: string }> = [];
 
@@ -191,10 +200,7 @@ export function registerAdsTools(
   server.tool(
     "get_pixel_stats",
     "Diagnose Meta Pixel and CAPI signal quality for an ad account. Lists all pixels, their last fire time, and the events received over the selected period. Use to check tracking health before launching conversion campaigns.",
-    {
-      account_id: z.string().describe("Meta Ad Account ID (without act_ prefix)"),
-      date_preset: z.enum(["last_7d", "last_14d", "last_30d"]).optional().describe("Analysis period (default: last_7d)"),
-    },
+    GetPixelStatsSchema.shape,
     async ({ account_id, date_preset = "last_7d" }) => {
       try {
         const pixels = await metaClient.getPixels(account_id);

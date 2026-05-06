@@ -3,6 +3,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
 import { MetaApiClient } from "../src/meta-client.js";
+import { registerAdsTools } from "../src/tools/ads.js";
 
 function getMetaClient(): MetaApiClient {
   return new MetaApiClient();
@@ -359,6 +360,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
     }
   );
+
+  registerAdsTools(server, getMetaClient());
 
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
   await server.connect(transport);
