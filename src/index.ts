@@ -11,6 +11,7 @@ import { registerCampaignTools } from "./tools/campaigns.js";
 import { registerAnalyticsTools } from "./tools/analytics.js";
 import { registerAudienceTools } from "./tools/audiences.js";
 import { registerCreativeTools } from "./tools/creatives.js";
+import { registerAdsTools } from "./tools/ads.js";
 import { registerOAuthTools } from "./tools/oauth.js";
 import { registerCampaignResources } from "./resources/campaigns.js";
 import { registerInsightsResources } from "./resources/insights.js";
@@ -87,6 +88,8 @@ async function main() {
     console.error("   ✅ Audience tools registered");
     registerCreativeTools(server, metaClient);
     console.error("   ✅ Creative tools registered");
+    registerAdsTools(server, metaClient);
+    console.error("   ✅ Ads tools registered");
     registerOAuthTools(server, auth);
     console.error("   ✅ OAuth tools registered");
 

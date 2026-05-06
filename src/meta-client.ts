@@ -604,67 +604,65 @@ export class MetaApiClient {
 
   // Ad Management
   async createAd(
-    adSetId: string,
+    accountId: string,
     adData: {
       name: string;
       adset_id: string;
       creative: { creative_id: string };
       status?: string;
+      [key: string]: unknown;
     }
-  ): Promise<Ad> {
-    this.debug("=== CREATE AD DEBUG ===");
-    this.debug("Ad Set ID:", adSetId);
-    this.debug("Ad Data:", JSON.stringify(adData, null, 2));
-
+  ): Promise<{ id: string }> {
+    const formattedAccountId = this.auth.getAccountId(accountId);
     const body = this.buildQueryString(adData);
-    this.debug("Request body:", body);
-    this.debug("API endpoint:", `${adSetId}/ads`);
+    return this.makeRequest<{ id: string }>(
+      `${formattedAccountId}/ads`,
+      "POST",
+      body,
+      formattedAccountId,
+      true
+    );
+  }
 
-    try {
-      const result = await this.makeRequest<Ad>(
-        `${adSetId}/ads`,
-        "POST",
-        body,
-        undefined, // Don't pass account ID for rate limiting since we don't have it
-        true
-      );
+  async updateAdSet(
+    adSetId: string,
+    updates: Record<string, string | number>
+  ): Promise<void> {
+    const body = this.buildQueryString(updates);
+    await this.makeRequest<{ success: boolean }>(adSetId, "POST", body, undefined, true);
+  }
 
-      this.debug("Create ad success:", JSON.stringify(result, null, 2));
-      this.debug("=====================");
-      return result;
-    } catch (error) {
-      this.debug("=== CREATE AD ERROR ===");
-      this.debug("Error object:", error);
+  async updateAd(
+    adId: string,
+    updates: Record<string, unknown>
+  ): Promise<void> {
+    const body = this.buildQueryString(updates as Record<string, any>);
+    await this.makeRequest<{ success: boolean }>(adId, "POST", body, undefined, true);
+  }
 
-      if (error instanceof Error) {
-        this.debug("Error message:", error.message);
+  async getPixels(
+    accountId: string
+  ): Promise<Array<{ id: string; name: string; last_fired_time?: string }>> {
+    const formattedAccountId = this.auth.getAccountId(accountId);
+    const query = this.buildQueryString({ fields: "id,name,last_fired_time" });
+    const response = await this.makeRequest<MetaApiResponse<{ id: string; name: string; last_fired_time?: string }>>(
+      `${formattedAccountId}/adspixels?${query}`,
+      "GET",
+      null,
+      formattedAccountId
+    );
+    return response.data || [];
+  }
 
-        // Try to parse Meta API error response
-        try {
-          const errorData = JSON.parse(error.message);
-          this.debug(
-            "Parsed Meta API error:",
-            JSON.stringify(errorData, null, 2)
-          );
-
-          if (errorData.error) {
-            this.debug("Meta API Error Details:");
-            this.debug("- Message:", errorData.error.message);
-            this.debug("- Code:", errorData.error.code);
-            this.debug("- Type:", errorData.error.type);
-            this.debug("- Error Subcode:", errorData.error.error_subcode);
-            this.debug("- FBTrace ID:", errorData.error.fbtrace_id);
-          }
-        } catch (parseError) {
-          this.debug(
-            "Could not parse error as JSON, raw message:",
-            error.message
-          );
-        }
-      }
-      this.debug("=====================");
-      throw error;
-    }
+  async getPixelStats(
+    pixelId: string,
+    startTime: number
+  ): Promise<Array<{ event_name: string; count: number }>> {
+    const query = this.buildQueryString({ start_time: startTime, aggregation: "event" });
+    const response = await this.makeRequest<MetaApiResponse<{ event_name: string; count: number }>>(
+      `${pixelId}/stats?${query}`
+    );
+    return response.data || [];
   }
 
   // Ad Methods
