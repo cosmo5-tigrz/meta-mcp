@@ -3,7 +3,6 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
 import { MetaApiClient } from "../src/meta-client.js";
-import { registerAdsTools } from "../src/tools/ads.js";
 
 function getMetaClient(): MetaApiClient {
   return new MetaApiClient();
@@ -361,7 +360,136 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
   );
 
-  registerAdsTools(server, getMetaClient());
+  server.tool(
+    "create_ad",
+    "Create an individual ad by linking an ad set and a creative",
+    {
+      account_id: z.string().describe("Meta Ad Account ID (without act_ prefix)"),
+      name: z.string().describe("Name of the ad"),
+      adset_id: z.string().describe("ID of the parent ad set"),
+      creative_id: z.string().describe("ID of the ad creative to use"),
+      status: z.enum(["ACTIVE", "PAUSED"]).optional().describe("Initial status (default: PAUSED)"),
+    },
+    async ({ account_id, name, adset_id, creative_id, status = "PAUSED" }) => {
+      try {
+        const client = getMetaClient();
+        const result = await client.createAd(account_id, { name, adset_id, creative: { creative_id }, status });
+        return { content: [{ type: "text", text: JSON.stringify({ success: true, ad_id: result.id, name, adset_id, creative_id, status }) }] };
+      } catch (error) {
+        return { content: [{ type: "text", text: `Error: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+      }
+    }
+  );
+
+  server.tool(
+    "update_adset",
+    "Update an existing ad set (name, status, budget, end date)",
+    {
+      adset_id: z.string().describe("ID of the ad set to update"),
+      name: z.string().optional().describe("New name"),
+      status: z.enum(["ACTIVE", "PAUSED"]).optional().describe("New status"),
+      daily_budget: z.number().optional().describe("New daily budget in cents"),
+      lifetime_budget: z.number().optional().describe("New lifetime budget in cents"),
+      end_time: z.string().optional().describe("New end date in ISO 8601 format"),
+      bid_amount: z.number().optional().describe("New bid amount in cents"),
+    },
+    async ({ adset_id, name, status, daily_budget, lifetime_budget, end_time, bid_amount }) => {
+      try {
+        const client = getMetaClient();
+        const updates: Record<string, string | number> = {};
+        if (name !== undefined) updates.name = name;
+        if (status !== undefined) updates.status = status;
+        if (daily_budget !== undefined) updates.daily_budget = Math.round(daily_budget);
+        if (lifetime_budget !== undefined) updates.lifetime_budget = Math.round(lifetime_budget);
+        if (end_time !== undefined) updates.end_time = end_time;
+        if (bid_amount !== undefined) updates.bid_amount = bid_amount;
+        if (Object.keys(updates).length === 0) return { content: [{ type: "text", text: "Error: No updates provided." }], isError: true };
+        await client.updateAdSet(adset_id, updates);
+        return { content: [{ type: "text", text: JSON.stringify({ success: true, adset_id, updates_applied: updates }) }] };
+      } catch (error) {
+        return { content: [{ type: "text", text: `Error: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+      }
+    }
+  );
+
+  server.tool(
+    "update_ad",
+    "Update an existing ad (name, status, or swap creative)",
+    {
+      ad_id: z.string().describe("ID of the ad to update"),
+      name: z.string().optional().describe("New name"),
+      status: z.enum(["ACTIVE", "PAUSED", "ARCHIVED"]).optional().describe("New status"),
+      creative_id: z.string().optional().describe("ID of a new creative to swap in"),
+    },
+    async ({ ad_id, name, status, creative_id }) => {
+      try {
+        const client = getMetaClient();
+        const updates: Record<string, unknown> = {};
+        if (name !== undefined) updates.name = name;
+        if (status !== undefined) updates.status = status;
+        if (creative_id !== undefined) updates.creative = { creative_id };
+        if (Object.keys(updates).length === 0) return { content: [{ type: "text", text: "Error: No updates provided." }], isError: true };
+        await client.updateAd(ad_id, updates);
+        return { content: [{ type: "text", text: JSON.stringify({ success: true, ad_id, updates_applied: updates }) }] };
+      } catch (error) {
+        return { content: [{ type: "text", text: `Error: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+      }
+    }
+  );
+
+  server.tool(
+    "bulk_update_adsets_budget",
+    "Update daily budget of multiple ad sets in one call",
+    {
+      updates: z.array(z.object({
+        adset_id: z.string().describe("Ad set ID"),
+        daily_budget: z.number().describe("New daily budget in cents"),
+      })).describe("List of ad set budget updates"),
+    },
+    async ({ updates }) => {
+      const client = getMetaClient();
+      const results: Array<{ adset_id: string; status: string; error?: string }> = [];
+      await Promise.all(updates.map(async ({ adset_id, daily_budget }) => {
+        try {
+          await client.updateAdSet(adset_id, { daily_budget: Math.round(daily_budget) });
+          results.push({ adset_id, status: "updated" });
+        } catch (error) {
+          results.push({ adset_id, status: "failed", error: error instanceof Error ? error.message : String(error) });
+        }
+      }));
+      const successCount = results.filter((r) => r.status === "updated").length;
+      const failCount = results.filter((r) => r.status === "failed").length;
+      return { content: [{ type: "text", text: JSON.stringify({ success: failCount === 0, summary: `${successCount} updated, ${failCount} failed`, results }) }], isError: failCount > 0 && successCount === 0 };
+    }
+  );
+
+  server.tool(
+    "get_pixel_stats",
+    "Diagnose Meta Pixel health: lists pixels, last fire time, and events received",
+    {
+      account_id: z.string().describe("Meta Ad Account ID (without act_ prefix)"),
+      date_preset: z.enum(["last_7d", "last_14d", "last_30d"]).optional().describe("Analysis period (default: last_7d)"),
+    },
+    async ({ account_id, date_preset = "last_7d" }) => {
+      try {
+        const client = getMetaClient();
+        const pixels = await client.getPixels(account_id);
+        if (!pixels || pixels.length === 0) return { content: [{ type: "text", text: JSON.stringify({ success: true, account_id, pixels: [] }) }] };
+        const daysMap: Record<string, number> = { last_7d: 7, last_14d: 14, last_30d: 30 };
+        const startTime = Math.floor(Date.now() / 1000) - (daysMap[date_preset] || 7) * 86400;
+        const pixelStats = await Promise.all(pixels.map(async (pixel) => {
+          let events: string[] = [];
+          try { const stats = await client.getPixelStats(pixel.id, startTime); events = stats.map((e) => `${e.event_name}: ${e.count}`); } catch { events = ["Could not retrieve event stats"]; }
+          const daysSince = pixel.last_fired_time ? Math.floor((Date.now() - new Date(pixel.last_fired_time).getTime()) / 86400000) : null;
+          const health = daysSince === null ? "never_fired" : daysSince === 0 ? "active" : daysSince <= 3 ? "good" : daysSince <= 7 ? "warning" : "stale";
+          return { pixel_id: pixel.id, pixel_name: pixel.name, last_fired: pixel.last_fired_time ? new Date(pixel.last_fired_time).toLocaleString("fr-FR") : "Never", health_status: health, events_last_period: events.length > 0 ? events : ["No events"] };
+        }));
+        return { content: [{ type: "text", text: JSON.stringify({ success: true, account_id, period: date_preset, pixels: pixelStats, summary: { total: pixelStats.length, active: pixelStats.filter((p) => ["active","good"].includes(p.health_status)).length } }) }] };
+      } catch (error) {
+        return { content: [{ type: "text", text: `Error: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+      }
+    }
+  );
 
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
   await server.connect(transport);
