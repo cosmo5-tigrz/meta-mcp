@@ -492,6 +492,154 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
   );
 
+  const META_API_VERSION = "v21.0";
+  const META_GRAPH_BASE  = `https://graph.facebook.com/${META_API_VERSION}`;
+  const META_VIDEO_BASE  = `https://graph-video.facebook.com/${META_API_VERSION}`;
+
+  server.tool(
+    "upload_video",
+    "Upload a video to a Meta Ad Account from a URL (Google Drive direct link, CDN, etc.)",
+    {
+      account_id: z.string().describe("Meta Ad Account ID (without act_ prefix)"),
+      file_url:   z.string().describe("Publicly accessible URL of the video file"),
+      title:      z.string().optional().describe("Optional video title shown in Meta media library"),
+    },
+    async ({ account_id, file_url, title }) => {
+      try {
+        const accessToken = process.env.META_ACCESS_TOKEN;
+        const params = new URLSearchParams({ access_token: accessToken!, file_url, ...(title && { title }) });
+        const response = await fetch(`${META_VIDEO_BASE}/act_${account_id}/advideos`, {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: params.toString(),
+        });
+        const data = await response.json() as any;
+        if (data.error) throw new Error(`Meta API error: ${data.error.message}`);
+        return { content: [{ type: "text", text: JSON.stringify({ success: true, video_id: data.id, title: title || file_url.split("/").pop() }) }] };
+      } catch (error) {
+        return { content: [{ type: "text", text: `Error: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+      }
+    }
+  );
+
+  server.tool(
+    "upload_image",
+    "Upload an image to a Meta Ad Account from a URL. Returns an image_hash to use in creatives.",
+    {
+      account_id: z.string().describe("Meta Ad Account ID (without act_ prefix)"),
+      file_url:   z.string().describe("Accessible URL of the image file (JPEG, PNG)"),
+      name:       z.string().optional().describe("Optional image name in Meta media library"),
+    },
+    async ({ account_id, file_url, name }) => {
+      try {
+        const accessToken = process.env.META_ACCESS_TOKEN;
+        const imageResponse = await fetch(file_url);
+        if (!imageResponse.ok) throw new Error(`Failed to download image (HTTP ${imageResponse.status})`);
+        const imageBuffer = await imageResponse.arrayBuffer();
+        const contentType = imageResponse.headers.get("content-type") || "image/jpeg";
+        const fileName = name || file_url.split("/").pop() || "image.jpg";
+        const form = new FormData();
+        form.append("access_token", accessToken!);
+        form.append("filename", new Blob([imageBuffer], { type: contentType }), fileName);
+        const response = await fetch(`${META_GRAPH_BASE}/act_${account_id}/adimages`, { method: "POST", body: form });
+        const data = await response.json() as any;
+        if (data.error) throw new Error(`Meta API error: ${data.error.message}`);
+        const imageEntry = Object.values(data.images || {})[0] as any;
+        if (!imageEntry) throw new Error("Unexpected Meta API response");
+        return { content: [{ type: "text", text: JSON.stringify({ success: true, image_hash: imageEntry.hash, url: imageEntry.url, name: fileName }) }] };
+      } catch (error) {
+        return { content: [{ type: "text", text: `Error: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+      }
+    }
+  );
+
+  server.tool(
+    "create_creative",
+    "Create an ad creative in a Meta Ad Account. Supports image, video, and carousel formats.",
+    {
+      account_id:     z.string().describe("Meta Ad Account ID (without act_ prefix)"),
+      name:           z.string().describe("Creative name shown in Meta library"),
+      format:         z.enum(["image", "video", "carousel"]).describe("Creative format"),
+      page_id:        z.string().describe("Facebook Page ID to run the ad from"),
+      link:           z.string().describe("Destination URL"),
+      image_hash:     z.string().optional().describe("Image hash (from upload_image). Required for format=image, optional thumbnail for format=video"),
+      video_id:       z.string().optional().describe("Video ID (from upload_video). Required for format=video"),
+      message:        z.string().optional().describe("Primary ad text"),
+      headline:       z.string().optional().describe("Headline below the creative"),
+      description:    z.string().optional().describe("Ad description"),
+      call_to_action: z.string().optional().describe("CTA type e.g. SHOP_NOW, LEARN_MORE, BUY_NOW (default: SHOP_NOW)"),
+      cards: z.array(z.object({
+        image_hash:     z.string(),
+        title:          z.string(),
+        link:           z.string(),
+        description:    z.string().optional(),
+        call_to_action: z.string().optional(),
+      })).optional().describe("Carousel cards — required for format=carousel"),
+    },
+    async ({ account_id, name, format, page_id, link, image_hash, video_id, message, headline, description, call_to_action = "SHOP_NOW", cards }) => {
+      try {
+        const accessToken = process.env.META_ACCESS_TOKEN;
+        let object_story_spec: any;
+        if (format === "image") {
+          if (!image_hash) throw new Error("image_hash is required for format=image");
+          object_story_spec = { page_id, link_data: { image_hash, link, ...(message && { message }), ...(headline && { name: headline }), ...(description && { description }), call_to_action: { type: call_to_action, value: { link } } } };
+        } else if (format === "video") {
+          if (!video_id) throw new Error("video_id is required for format=video");
+          object_story_spec = { page_id, video_data: { video_id, ...(image_hash && { image_hash }), title: headline || name, message: message || "", call_to_action: { type: call_to_action, value: { link } } } };
+        } else if (format === "carousel") {
+          if (!cards || !cards.length) throw new Error("cards[] is required for format=carousel");
+          object_story_spec = { page_id, link_data: { link, ...(message && { message }), child_attachments: cards.map((c) => ({ link: c.link || link, image_hash: c.image_hash, name: c.title, ...(c.description && { description: c.description }), call_to_action: { type: c.call_to_action || call_to_action, value: { link: c.link || link } } })), multi_share_end_card: false } };
+        }
+        const body = new URLSearchParams({ access_token: accessToken!, name, object_story_spec: JSON.stringify(object_story_spec), degrees_of_freedom_spec: JSON.stringify({ creative_features_spec: { standard_enhancements: { enroll_status: "OPT_OUT" } } }) });
+        const response = await fetch(`${META_GRAPH_BASE}/act_${account_id}/adcreatives`, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: body.toString() });
+        const data = await response.json() as any;
+        if (data.error) throw new Error(`Meta API error: ${data.error.message}`);
+        return { content: [{ type: "text", text: JSON.stringify({ success: true, creative_id: data.id, name, format }) }] };
+      } catch (error) {
+        return { content: [{ type: "text", text: `Error: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+      }
+    }
+  );
+
+  server.tool(
+    "create_adset",
+    "Create an ad set inside an existing Meta campaign. Supports conversion optimization, custom audiences, and geo targeting.",
+    {
+      account_id:        z.string().describe("Meta Ad Account ID (without act_ prefix)"),
+      campaign_id:       z.string().describe("Parent campaign ID"),
+      name:              z.string().describe("Ad set name"),
+      daily_budget:      z.number().describe("Daily budget in cents (e.g. 500 = 5€)"),
+      optimization_goal: z.string().optional().describe("e.g. OFFSITE_CONVERSIONS, PURCHASE, LINK_CLICKS (default: OFFSITE_CONVERSIONS)"),
+      billing_event:     z.string().optional().describe("Default: IMPRESSIONS"),
+      bid_strategy:      z.string().optional().describe("Default: LOWEST_COST_WITHOUT_CAP"),
+      status:            z.enum(["ACTIVE", "PAUSED"]).optional().describe("Initial status (default: PAUSED)"),
+      pixel_id:          z.string().optional().describe("Meta Pixel ID for conversion tracking"),
+      custom_event_type: z.string().optional().describe("e.g. PURCHASE, ADD_TO_CART (default: PURCHASE)"),
+      countries:         z.array(z.string()).optional().describe('Target country codes e.g. ["FR", "BE"] (default: ["FR"])'),
+      age_min:           z.number().optional().describe("Minimum target age (default: 18)"),
+      age_max:           z.number().optional().describe("Maximum target age (default: 65)"),
+      genders:           z.array(z.number()).optional().describe("1 = male, 2 = female, omit for all"),
+      custom_audiences:  z.array(z.string()).optional().describe("Array of audience IDs to include"),
+      excluded_audiences: z.array(z.string()).optional().describe("Array of audience IDs to exclude"),
+      start_time:        z.string().optional().describe("Start date ISO 8601"),
+      end_time:          z.string().optional().describe("End date ISO 8601"),
+    },
+    async ({ account_id, campaign_id, name, daily_budget, optimization_goal = "OFFSITE_CONVERSIONS", billing_event = "IMPRESSIONS", bid_strategy = "LOWEST_COST_WITHOUT_CAP", status = "PAUSED", pixel_id, custom_event_type = "PURCHASE", countries = ["FR"], age_min = 18, age_max = 65, genders, custom_audiences, excluded_audiences, start_time, end_time }) => {
+      try {
+        const accessToken = process.env.META_ACCESS_TOKEN;
+        const targeting: any = { geo_locations: { countries }, age_min, age_max, ...(genders && { genders }), ...(custom_audiences?.length && { custom_audiences: custom_audiences.map((id) => ({ id })) }), ...(excluded_audiences?.length && { excluded_custom_audiences: excluded_audiences.map((id) => ({ id })) }) };
+        const promoted_object = pixel_id ? { pixel_id, custom_event_type } : undefined;
+        const payload = new URLSearchParams({ access_token: accessToken!, campaign_id, name, daily_budget: String(daily_budget), optimization_goal, billing_event, bid_strategy, status, targeting: JSON.stringify(targeting), ...(promoted_object && { promoted_object: JSON.stringify(promoted_object) }), ...(start_time && { start_time }), ...(end_time && { end_time }) });
+        const response = await fetch(`${META_GRAPH_BASE}/act_${account_id}/adsets`, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: payload.toString() });
+        const data = await response.json() as any;
+        if (data.error) throw new Error(`Meta API error: ${data.error.message}`);
+        return { content: [{ type: "text", text: JSON.stringify({ success: true, adset_id: data.id, name, daily_budget, status }) }] };
+      } catch (error) {
+        return { content: [{ type: "text", text: `Error: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+      }
+    }
+  );
+
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
   await server.connect(transport);
   await transport.handleRequest(req, res, req.body);
