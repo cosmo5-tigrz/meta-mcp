@@ -40,25 +40,19 @@ export default async function handler(req, res) {
     }
 
     const imageBuffer  = await imageResponse.arrayBuffer();
-    const imageBytes   = Buffer.from(imageBuffer);
     const contentType  = imageResponse.headers.get("content-type") || "image/jpeg";
     const fileName     = name || file_url.split("/").pop() || "image.jpg";
 
-    // Step 2 — Upload to Meta as multipart/form-data
-    const FormData = (await import("form-data")).default;
+    // Step 2 — Upload to Meta as multipart/form-data (native FormData, Node 18+)
     const form = new FormData();
     form.append("access_token", accessToken);
-    form.append("filename", imageBytes, {
-      filename:    fileName,
-      contentType: contentType,
-    });
+    form.append("filename", new Blob([imageBuffer], { type: contentType }), fileName);
 
     const response = await fetch(
       `${META_GRAPH_BASE}/act_${account_id}/adimages`,
       {
-        method:  "POST",
-        headers: form.getHeaders(),
-        body:    form,
+        method: "POST",
+        body:   form,
       }
     );
 
