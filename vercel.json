@@ -13,7 +13,11 @@
     "api/auth/revoke.ts": { "maxDuration": 30 },
     "api/index.ts": { "maxDuration": 10 },
     "api/dashboard.ts": { "maxDuration": 15 },
-    "api/test-auth.ts": { "maxDuration": 15 }
+    "api/test-auth.ts": { "maxDuration": 15 },
+    "api/upload-video.js": { "maxDuration": 60 },
+    "api/upload-image.js": { "maxDuration": 60 },
+    "api/create-creative.js": { "maxDuration": 30 },
+    "api/create-adset.js": { "maxDuration": 30 }
   },
   "rewrites": [
     { "source": "/", "destination": "/api/index" },
