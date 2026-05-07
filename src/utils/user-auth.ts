@@ -1,5 +1,10 @@
-import { SignJWT, jwtVerify } from 'jose';
 import { AuthManager } from './auth.js';
+
+// Lazy loaders — non-static strings prevent esbuild from bundling these packages
+async function getJose() {
+  const pkg = 'jose';
+  return import(pkg as any) as Promise<typeof import('jose')>;
+}
 import type { MetaApiConfig } from '../types/meta-api.js';
 
 // Storage interface
@@ -21,7 +26,8 @@ class VercelKVAdapter implements StorageAdapter {
 
   private async initKV() {
     try {
-      const { kv } = await import('@vercel/kv');
+      const pkg = '@vercel/kv';
+      const { kv } = await import(pkg as any);
       this.kv = kv;
     } catch (error) {
       console.warn('Vercel KV not available:', error);
@@ -59,7 +65,8 @@ class RedisAdapter implements StorageAdapter {
 
   private async initRedis() {
     try {
-      const { createClient } = await import('redis');
+      const pkg = 'redis';
+      const { createClient } = await import(pkg as any);
       this.client = createClient({
         url: process.env.REDIS_URL
       });
@@ -170,7 +177,7 @@ export class UserAuthManager {
    */
   static async createSessionToken(userId: string): Promise<string> {
     const secret = new TextEncoder().encode(this.JWT_SECRET);
-    
+    const { SignJWT } = await getJose();
     const jwt = await new SignJWT({ userId })
       .setProtectedHeader({ alg: 'HS256' })
       .setIssuedAt()
@@ -186,6 +193,7 @@ export class UserAuthManager {
   static async verifySessionToken(token: string): Promise<{ userId: string } | null> {
     try {
       const secret = new TextEncoder().encode(this.JWT_SECRET);
+      const { jwtVerify } = await getJose();
       const { payload } = await jwtVerify(token, secret);
       
       if (typeof payload.userId === 'string') {
