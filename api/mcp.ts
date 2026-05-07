@@ -1,9 +1,11 @@
 // @ts-nocheck
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { z } from "zod";
 import { MetaApiClient } from "../src/meta-client.js";
+
+// Non-static strings prevent esbuild from bundling these packages at build time
+const _mcpPkg   = "@modelcontextprotocol/sdk/server/mcp.js";
+const _httpPkg  = "@modelcontextprotocol/sdk/server/streamableHttp.js";
+const _zodPkg   = "zod";
 
 function getMetaClient(): MetaApiClient {
   return new MetaApiClient();
@@ -14,6 +16,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     res.status(405).json({ error: "Method Not Allowed" });
     return;
   }
+
+  const { McpServer } = await import(_mcpPkg);
+  const { StreamableHTTPServerTransport } = await import(_httpPkg);
+  const { z } = await import(_zodPkg);
 
   const server = new McpServer({
     name: "meta-ads-mcp",
