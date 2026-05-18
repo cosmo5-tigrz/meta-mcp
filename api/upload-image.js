@@ -30,18 +30,28 @@ export default async function handler(req, res) {
   if (!file_url)   return res.status(400).json({ error: "file_url is required" });
 
   try {
-    // Step 1 — Download the image from the provided URL
-    const imageResponse = await fetch(file_url);
+    // Step 1 — Download the image from the provided URL (follows redirects, supports Google Drive)
+    const imageResponse = await fetch(file_url, {
+      redirect: "follow",
+      headers: { "User-Agent": "Mozilla/5.0 (compatible; MetaMCP/1.0)" },
+    });
     if (!imageResponse.ok) {
       return res.status(400).json({
         success: false,
-        error: `Failed to download image from URL (HTTP ${imageResponse.status})`,
+        error: `Failed to download image from URL (HTTP ${imageResponse.status}). For Google Drive, use: https://drive.google.com/uc?id=FILE_ID&export=download`,
+      });
+    }
+
+    const contentType = imageResponse.headers.get("content-type") || "";
+    if (!contentType.startsWith("image/")) {
+      return res.status(400).json({
+        success: false,
+        error: `URL did not return an image (content-type: ${contentType || "unknown"}). Ensure the URL points directly to an image file.`,
       });
     }
 
     const imageBuffer  = await imageResponse.arrayBuffer();
-    const contentType  = imageResponse.headers.get("content-type") || "image/jpeg";
-    const fileName     = name || file_url.split("/").pop() || "image.jpg";
+    const fileName     = name || file_url.split("/").pop()?.split("?")[0] || "image.jpg";
 
     // Step 2 — Upload to Meta as multipart/form-data (native FormData, Node 18+)
     const form = new FormData();
@@ -59,10 +69,14 @@ export default async function handler(req, res) {
     const data = await response.json();
 
     if (data.error) {
+      const e = data.error;
       return res.status(400).json({
-        success: false,
-        error:   data.error.message,
-        code:    data.error.code,
+        success:    false,
+        error:      e.error_user_msg || e.message,
+        code:       e.code,
+        subcode:    e.error_subcode,
+        user_title: e.error_user_title,
+        trace_id:   e.fbtrace_id,
       });
     }
 

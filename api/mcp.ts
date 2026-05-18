@@ -11,6 +11,24 @@ function getMetaClient(): MetaApiClient {
   return new MetaApiClient();
 }
 
+function formatMetaError(error: unknown): Record<string, unknown> {
+  if (error instanceof Error) {
+    const result: Record<string, unknown> = { error: error.message };
+    if ("errorCode" in error && (error as any).errorCode != null) result.code = (error as any).errorCode;
+    if ("errorSubcode" in error && (error as any).errorSubcode != null) result.subcode = (error as any).errorSubcode;
+    if ("errorType" in error && (error as any).errorType != null) result.type = (error as any).errorType;
+    return result;
+  }
+  return { error: String(error) };
+}
+
+function metaErrResponse(error: unknown) {
+  return {
+    content: [{ type: "text" as const, text: JSON.stringify({ success: false, ...formatMetaError(error) }) }],
+    isError: true as const,
+  };
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== "POST") {
     res.status(405).json({ error: "Method Not Allowed" });
@@ -146,29 +164,32 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       name: z.string().describe("Campaign name"),
       objective: z.string().describe("Campaign objective (OUTCOME_TRAFFIC, OUTCOME_LEADS, etc.)"),
       status: z.enum(["ACTIVE", "PAUSED"]).optional().describe("Campaign status (defaults to PAUSED)"),
-      daily_budget: z.number().optional().describe("Daily budget in cents"),
-      lifetime_budget: z.number().optional().describe("Lifetime budget in cents"),
+      daily_budget: z.number().optional().describe("Daily budget in cents. Omit for ABO (budget set at ad set level)."),
+      lifetime_budget: z.number().optional().describe("Lifetime budget in cents. Requires end_time."),
+      end_time: z.string().optional().describe("Campaign end date ISO 8601. Required when using lifetime_budget."),
+      special_ad_categories: z.array(z.string()).optional().describe('Special ad categories e.g. ["NONE"] or ["HOUSING"]. Defaults to [].'),
     },
-    async ({ account_id, name, objective, status, daily_budget, lifetime_budget }) => {
+    async ({ account_id, name, objective, status, daily_budget, lifetime_budget, end_time, special_ad_categories }) => {
       try {
         const client = getMetaClient();
         const data: any = {
           name,
           objective,
           status: status || "PAUSED",
-          special_ad_categories: [],
+          special_ad_categories: special_ad_categories || [],
+          buying_type: "AUCTION",
         };
         if (daily_budget) data.daily_budget = daily_budget;
-        if (lifetime_budget) data.lifetime_budget = lifetime_budget;
+        if (lifetime_budget) {
+          data.lifetime_budget = lifetime_budget;
+          if (end_time) data.stop_time = end_time;
+        }
         const campaign = await client.createCampaign(account_id, data);
         return {
           content: [{ type: "text", text: JSON.stringify({ success: true, campaign }) }],
         };
       } catch (error) {
-        return {
-          content: [{ type: "text", text: `Error: ${error instanceof Error ? error.message : String(error)}` }],
-          isError: true,
-        };
+        return metaErrResponse(error);
       }
     }
   );
@@ -184,20 +205,26 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     },
     async ({ campaign_id, name, status, daily_budget }) => {
       try {
+        if (daily_budget === 0) {
+          return {
+            content: [{ type: "text", text: JSON.stringify({ success: false, error: "Cannot set daily_budget to 0. Removing a campaign budget (CBO → ABO) is not supported by Meta API — create a new campaign instead." }) }],
+            isError: true,
+          };
+        }
         const client = getMetaClient();
         const updates: any = {};
         if (name) updates.name = name;
         if (status) updates.status = status;
-        if (daily_budget) updates.daily_budget = daily_budget;
+        if (daily_budget && daily_budget > 0) updates.daily_budget = daily_budget;
+        if (Object.keys(updates).length === 0) {
+          return { content: [{ type: "text", text: JSON.stringify({ success: false, error: "No updates provided." }) }], isError: true };
+        }
         const result = await client.updateCampaign(campaign_id, updates);
         return {
           content: [{ type: "text", text: JSON.stringify({ success: true, result }) }],
         };
       } catch (error) {
-        return {
-          content: [{ type: "text", text: `Error: ${error instanceof Error ? error.message : String(error)}` }],
-          isError: true,
-        };
+        return metaErrResponse(error);
       }
     }
   );
@@ -539,22 +566,33 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     async ({ account_id, file_url, name }) => {
       try {
         const accessToken = process.env.META_ACCESS_TOKEN;
-        const imageResponse = await fetch(file_url);
-        if (!imageResponse.ok) throw new Error(`Failed to download image (HTTP ${imageResponse.status})`);
+        const imageResponse = await fetch(file_url, {
+          redirect: "follow",
+          headers: { "User-Agent": "Mozilla/5.0 (compatible; MetaMCP/1.0)" },
+        });
+        if (!imageResponse.ok) {
+          return { content: [{ type: "text", text: JSON.stringify({ success: false, error: `Failed to download image from URL (HTTP ${imageResponse.status}). For Google Drive, use a direct download URL: https://drive.google.com/uc?id=FILE_ID&export=download` }) }], isError: true };
+        }
+        const contentType = imageResponse.headers.get("content-type") || "";
+        if (!contentType.startsWith("image/")) {
+          return { content: [{ type: "text", text: JSON.stringify({ success: false, error: `URL did not return an image (content-type: ${contentType || "unknown"}). Ensure the URL points directly to an image file.` }) }], isError: true };
+        }
         const imageBuffer = await imageResponse.arrayBuffer();
-        const contentType = imageResponse.headers.get("content-type") || "image/jpeg";
-        const fileName = name || file_url.split("/").pop() || "image.jpg";
+        const fileName = name || file_url.split("/").pop()?.split("?")[0] || "image.jpg";
         const form = new FormData();
         form.append("access_token", accessToken!);
         form.append("filename", new Blob([imageBuffer], { type: contentType }), fileName);
         const response = await fetch(`${META_GRAPH_BASE}/act_${account_id}/adimages`, { method: "POST", body: form });
         const data = await response.json() as any;
-        if (data.error) throw new Error(`Meta API error: ${data.error.message}`);
+        if (data.error) {
+          const e = data.error;
+          return { content: [{ type: "text", text: JSON.stringify({ success: false, error: e.error_user_msg || e.message, code: e.code, subcode: e.error_subcode, trace_id: e.fbtrace_id }) }], isError: true };
+        }
         const imageEntry = Object.values(data.images || {})[0] as any;
-        if (!imageEntry) throw new Error("Unexpected Meta API response");
+        if (!imageEntry) throw new Error("Unexpected Meta API response — no image entry returned");
         return { content: [{ type: "text", text: JSON.stringify({ success: true, image_hash: imageEntry.hash, url: imageEntry.url, name: fileName }) }] };
       } catch (error) {
-        return { content: [{ type: "text", text: `Error: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+        return metaErrResponse(error);
       }
     }
   );
@@ -609,15 +647,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   server.tool(
     "create_adset",
-    "Create an ad set inside an existing Meta campaign. Supports conversion optimization, custom audiences, and geo targeting.",
+    "Create an ad set inside an existing Meta campaign. Supports conversion optimization, custom audiences, and geo targeting. For CBO campaigns (campaign has a budget), do NOT pass daily_budget. For ABO campaigns (no campaign budget), daily_budget is required.",
     {
       account_id:        z.string().describe("Meta Ad Account ID (without act_ prefix)"),
       campaign_id:       z.string().describe("Parent campaign ID"),
       name:              z.string().describe("Ad set name"),
-      daily_budget:      z.number().describe("Daily budget in cents (e.g. 500 = 5€)"),
-      optimization_goal: z.string().optional().describe("e.g. OFFSITE_CONVERSIONS, PURCHASE, LINK_CLICKS (default: OFFSITE_CONVERSIONS)"),
+      daily_budget:      z.number().optional().describe("Daily budget in cents (e.g. 500 = 5€). Required for ABO campaigns; must be omitted for CBO campaigns."),
+      optimization_goal: z.string().optional().describe("e.g. OFFSITE_CONVERSIONS, LINK_CLICKS, REACH (default: OFFSITE_CONVERSIONS)"),
       billing_event:     z.string().optional().describe("Default: IMPRESSIONS"),
-      bid_strategy:      z.string().optional().describe("Default: LOWEST_COST_WITHOUT_CAP"),
+      bid_strategy:      z.string().optional().describe("Inherited from campaign if omitted"),
       status:            z.enum(["ACTIVE", "PAUSED"]).optional().describe("Initial status (default: PAUSED)"),
       pixel_id:          z.string().optional().describe("Meta Pixel ID for conversion tracking"),
       custom_event_type: z.string().optional().describe("e.g. PURCHASE, ADD_TO_CART (default: PURCHASE)"),
@@ -630,18 +668,118 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       start_time:        z.string().optional().describe("Start date ISO 8601"),
       end_time:          z.string().optional().describe("End date ISO 8601"),
     },
-    async ({ account_id, campaign_id, name, daily_budget, optimization_goal = "OFFSITE_CONVERSIONS", billing_event = "IMPRESSIONS", bid_strategy = "LOWEST_COST_WITHOUT_CAP", status = "PAUSED", pixel_id, custom_event_type = "PURCHASE", countries = ["FR"], age_min = 18, age_max = 65, genders, custom_audiences, excluded_audiences, start_time, end_time }) => {
+    async ({ account_id, campaign_id, name, daily_budget, optimization_goal, billing_event, bid_strategy, status, pixel_id, custom_event_type, countries, age_min, age_max, genders, custom_audiences, excluded_audiences, start_time, end_time }) => {
       try {
         const accessToken = process.env.META_ACCESS_TOKEN;
-        const targeting: any = { geo_locations: { countries }, age_min, age_max, ...(genders && { genders }), ...(custom_audiences?.length && { custom_audiences: custom_audiences.map((id) => ({ id })) }), ...(excluded_audiences?.length && { excluded_custom_audiences: excluded_audiences.map((id) => ({ id })) }) };
-        const promoted_object = pixel_id ? { pixel_id, custom_event_type } : undefined;
-        const payload = new URLSearchParams({ access_token: accessToken!, campaign_id, name, daily_budget: String(daily_budget), optimization_goal, billing_event, bid_strategy, status, targeting: JSON.stringify(targeting), ...(promoted_object && { promoted_object: JSON.stringify(promoted_object) }), ...(start_time && { start_time }), ...(end_time && { end_time }) });
-        const response = await fetch(`${META_GRAPH_BASE}/act_${account_id}/adsets`, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: payload.toString() });
+
+        // Fetch parent campaign to detect CBO and inherit bid_strategy
+        const campRes = await fetch(
+          `${META_GRAPH_BASE}/${campaign_id}?fields=daily_budget,lifetime_budget,bid_strategy&access_token=${encodeURIComponent(accessToken!)}`,
+          { redirect: "follow" }
+        );
+        const campData = await campRes.json() as any;
+        if (campData.error) {
+          const e = campData.error;
+          return { content: [{ type: "text", text: JSON.stringify({ success: false, error: `Could not fetch parent campaign: ${e.error_user_msg || e.message}`, code: e.code, subcode: e.error_subcode }) }], isError: true };
+        }
+
+        const campaignHasBudget = !!(campData.daily_budget || campData.lifetime_budget);
+
+        if (!campaignHasBudget && !daily_budget) {
+          return { content: [{ type: "text", text: JSON.stringify({ success: false, error: "daily_budget is required: the parent campaign has no budget (ABO mode). Provide a daily_budget for the ad set." }) }], isError: true };
+        }
+        if (campaignHasBudget && daily_budget) {
+          return { content: [{ type: "text", text: JSON.stringify({ success: false, error: "Cannot set daily_budget on ad set when campaign has a budget (CBO mode). Remove daily_budget from the request." }) }], isError: true };
+        }
+
+        const targeting: any = {
+          geo_locations: { countries: countries || ["FR"] },
+          age_min: age_min ?? 18,
+          age_max: age_max ?? 65,
+          ...(genders && { genders }),
+          ...(custom_audiences?.length && { custom_audiences: custom_audiences.map((id) => ({ id })) }),
+          ...(excluded_audiences?.length && { excluded_custom_audiences: excluded_audiences.map((id) => ({ id })) }),
+        };
+
+        const resolvedOptGoal = optimization_goal || "OFFSITE_CONVERSIONS";
+        const promoted_object = pixel_id
+          ? { pixel_id, custom_event_type: custom_event_type || "PURCHASE" }
+          : undefined;
+
+        const params: Record<string, string> = {
+          access_token: accessToken!,
+          campaign_id,
+          name,
+          optimization_goal: resolvedOptGoal,
+          billing_event: billing_event || "IMPRESSIONS",
+          bid_strategy: campData.bid_strategy || bid_strategy || "LOWEST_COST_WITHOUT_CAP",
+          status: status || "PAUSED",
+          targeting: JSON.stringify(targeting),
+        };
+
+        if (!campaignHasBudget && daily_budget) params.daily_budget = String(daily_budget);
+        if (promoted_object) params.promoted_object = JSON.stringify(promoted_object);
+        if (start_time) params.start_time = start_time;
+        if (end_time) params.end_time = end_time;
+
+        const response = await fetch(`${META_GRAPH_BASE}/act_${account_id}/adsets`, {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams(params).toString(),
+        });
         const data = await response.json() as any;
-        if (data.error) throw new Error(`Meta API error: ${data.error.message}`);
-        return { content: [{ type: "text", text: JSON.stringify({ success: true, adset_id: data.id, name, daily_budget, status }) }] };
+        if (data.error) {
+          const e = data.error;
+          return { content: [{ type: "text", text: JSON.stringify({ success: false, error: e.error_user_msg || e.message, code: e.code, subcode: e.error_subcode, user_title: e.error_user_title, trace_id: e.fbtrace_id }) }], isError: true };
+        }
+        return { content: [{ type: "text", text: JSON.stringify({ success: true, adset_id: data.id, name, daily_budget: daily_budget || null, status: status || "PAUSED", cbo: campaignHasBudget }) }] };
       } catch (error) {
-        return { content: [{ type: "text", text: `Error: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+        return metaErrResponse(error);
+      }
+    }
+  );
+
+  server.tool(
+    "delete_campaign",
+    "Permanently delete a campaign. This action is irreversible.",
+    { campaign_id: z.string().describe("Campaign ID to delete") },
+    async ({ campaign_id }) => {
+      try {
+        const client = getMetaClient();
+        await client.deleteCampaign(campaign_id);
+        return { content: [{ type: "text", text: JSON.stringify({ success: true, deleted_campaign_id: campaign_id }) }] };
+      } catch (error) {
+        return metaErrResponse(error);
+      }
+    }
+  );
+
+  server.tool(
+    "delete_adset",
+    "Permanently delete an ad set. This action is irreversible.",
+    { adset_id: z.string().describe("Ad set ID to delete") },
+    async ({ adset_id }) => {
+      try {
+        const client = getMetaClient();
+        await client.deleteAdSet(adset_id);
+        return { content: [{ type: "text", text: JSON.stringify({ success: true, deleted_adset_id: adset_id }) }] };
+      } catch (error) {
+        return metaErrResponse(error);
+      }
+    }
+  );
+
+  server.tool(
+    "delete_ad",
+    "Permanently delete an ad. This action is irreversible.",
+    { ad_id: z.string().describe("Ad ID to delete") },
+    async ({ ad_id }) => {
+      try {
+        const client = getMetaClient();
+        await client.deleteAd(ad_id);
+        return { content: [{ type: "text", text: JSON.stringify({ success: true, deleted_ad_id: ad_id }) }] };
+      } catch (error) {
+        return metaErrResponse(error);
       }
     }
   );

@@ -65,47 +65,65 @@ export default async function handler(req, res) {
   } = req.body || {};
 
   // — Validation —
-  if (!account_id)   return res.status(400).json({ error: "account_id is required" });
-  if (!campaign_id)  return res.status(400).json({ error: "campaign_id is required" });
-  if (!name)         return res.status(400).json({ error: "name is required" });
-  if (!daily_budget) return res.status(400).json({ error: "daily_budget is required (in cents)" });
-
-  // — Build targeting spec —
-  const targeting = {
-    geo_locations: { countries },
-    age_min,
-    age_max,
-    ...(genders && { genders }),
-    ...(custom_audiences?.length && {
-      custom_audiences: custom_audiences.map((id) => ({ id })),
-    }),
-    ...(excluded_audiences?.length && {
-      excluded_custom_audiences: excluded_audiences.map((id) => ({ id })),
-    }),
-  };
-
-  // — Build promoted_object (for conversion campaigns) —
-  const promoted_object = pixel_id
-    ? { pixel_id, custom_event_type }
-    : undefined;
-
-  // — Assemble payload —
-  const payload = {
-    access_token:     accessToken,
-    campaign_id,
-    name,
-    daily_budget:     String(daily_budget),
-    optimization_goal,
-    billing_event,
-    bid_strategy,
-    status,
-    targeting:        JSON.stringify(targeting),
-    ...(promoted_object && { promoted_object: JSON.stringify(promoted_object) }),
-    ...(start_time && { start_time }),
-    ...(end_time   && { end_time }),
-  };
+  if (!account_id)  return res.status(400).json({ error: "account_id is required" });
+  if (!campaign_id) return res.status(400).json({ error: "campaign_id is required" });
+  if (!name)        return res.status(400).json({ error: "name is required" });
 
   try {
+    // — Check parent campaign for CBO vs ABO —
+    const campRes = await fetch(
+      `${META_GRAPH_BASE}/${campaign_id}?fields=daily_budget,lifetime_budget,bid_strategy&access_token=${encodeURIComponent(accessToken)}`
+    );
+    const campData = await campRes.json();
+    if (campData.error) {
+      const e = campData.error;
+      return res.status(400).json({ success: false, error: `Could not fetch parent campaign: ${e.error_user_msg || e.message}`, code: e.code, subcode: e.error_subcode });
+    }
+
+    const campaignHasBudget = !!(campData.daily_budget || campData.lifetime_budget);
+
+    if (!campaignHasBudget && !daily_budget) {
+      return res.status(400).json({ success: false, error: "daily_budget is required: parent campaign has no budget (ABO). Provide a daily_budget for the ad set." });
+    }
+    if (campaignHasBudget && daily_budget) {
+      return res.status(400).json({ success: false, error: "Cannot set daily_budget on ad set when campaign has a budget (CBO). Remove daily_budget from the request." });
+    }
+
+    // — Build targeting spec —
+    const targeting = {
+      geo_locations: { countries },
+      age_min,
+      age_max,
+      ...(genders && { genders }),
+      ...(custom_audiences?.length && {
+        custom_audiences: custom_audiences.map((id) => ({ id })),
+      }),
+      ...(excluded_audiences?.length && {
+        excluded_custom_audiences: excluded_audiences.map((id) => ({ id })),
+      }),
+    };
+
+    // — Build promoted_object (for conversion campaigns) —
+    const promoted_object = pixel_id
+      ? { pixel_id, custom_event_type }
+      : undefined;
+
+    // — Assemble payload —
+    const payload = {
+      access_token:     accessToken,
+      campaign_id,
+      name,
+      optimization_goal,
+      billing_event,
+      bid_strategy:     campData.bid_strategy || bid_strategy,
+      status,
+      targeting:        JSON.stringify(targeting),
+      ...((!campaignHasBudget && daily_budget) && { daily_budget: String(daily_budget) }),
+      ...(promoted_object && { promoted_object: JSON.stringify(promoted_object) }),
+      ...(start_time && { start_time }),
+      ...(end_time   && { end_time }),
+    };
+
     const response = await fetch(
       `${META_GRAPH_BASE}/act_${account_id}/adsets`,
       {
@@ -118,11 +136,14 @@ export default async function handler(req, res) {
     const data = await response.json();
 
     if (data.error) {
+      const e = data.error;
       return res.status(400).json({
-        success: false,
-        error:   data.error.message,
-        code:    data.error.code,
-        raw:     data.error,
+        success:    false,
+        error:      e.error_user_msg || e.message,
+        code:       e.code,
+        subcode:    e.error_subcode,
+        user_title: e.error_user_title,
+        trace_id:   e.fbtrace_id,
       });
     }
 
@@ -130,8 +151,9 @@ export default async function handler(req, res) {
       success:   true,
       adset_id:  data.id,
       name,
-      daily_budget,
+      daily_budget: daily_budget || null,
       status,
+      cbo:       campaignHasBudget,
     });
 
   } catch (err) {

@@ -277,6 +277,26 @@ export class MetaApiClient {
     );
   }
 
+  async deleteAdSet(adSetId: string): Promise<{ success: boolean }> {
+    return this.makeRequest<{ success: boolean }>(
+      adSetId,
+      "DELETE",
+      null,
+      undefined,
+      true
+    );
+  }
+
+  async deleteAd(adId: string): Promise<{ success: boolean }> {
+    return this.makeRequest<{ success: boolean }>(
+      adId,
+      "DELETE",
+      null,
+      undefined,
+      true
+    );
+  }
+
   // Ad Set Methods
   async getAdSets(
     params: PaginationParams & {
