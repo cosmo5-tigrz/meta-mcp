@@ -110,27 +110,40 @@ export default async function handler(req, res) {
       ? { pixel_id, custom_event_type }
       : undefined;
 
-    // User's explicit bid_strategy takes priority over campaign-inherited value.
-    // Fallback chain: explicit param → campaign → LOWEST_COST_WITHOUT_CAP
-    const resolvedBidStrategy = bid_strategy || campData.bid_strategy || "LOWEST_COST_WITHOUT_CAP";
-
-    // These strategies require bid_amount — return a clear error rather than letting Meta reject
+    // Strategies that require bid_amount
     const needsBidAmount = ["LOWEST_COST_WITH_BID_CAP", "COST_CAP", "TARGET_COST"];
-    if (needsBidAmount.includes(resolvedBidStrategy) && !bid_amount) {
-      return res.status(400).json({
-        success: false,
-        error: `bid_amount is required when bid_strategy is ${resolvedBidStrategy}. Provide bid_amount in cents, or use bid_strategy: "LOWEST_COST_WITHOUT_CAP" to let Meta optimize without a cap.`,
-      });
+
+    // CBO: Meta IGNORES bid_strategy sent at ad-set level — campaign-level strategy applies.
+    // ABO: bid_strategy set at ad-set level. LOWEST_COST_WITHOUT_CAP is Meta's default (don't send).
+    if (campaignHasBudget) {
+      const campStrategy = campData.bid_strategy;
+      if (campStrategy && needsBidAmount.includes(campStrategy) && !bid_amount) {
+        return res.status(400).json({
+          success: false,
+          error: `This CBO campaign uses ${campStrategy} — bid_amount (in cents) is required for all ad sets. Provide bid_amount, or recreate the campaign with bid_strategy: LOWEST_COST_WITHOUT_CAP.`,
+        });
+      }
+    } else {
+      const aboStrategy = bid_strategy || "LOWEST_COST_WITHOUT_CAP";
+      if (needsBidAmount.includes(aboStrategy) && !bid_amount) {
+        return res.status(400).json({
+          success: false,
+          error: `bid_amount is required when bid_strategy is ${aboStrategy}. Provide bid_amount in cents, or use bid_strategy: "LOWEST_COST_WITHOUT_CAP".`,
+        });
+      }
     }
 
     // — Assemble payload —
+    // CBO: don't send bid_strategy (Meta uses campaign-level strategy, overrides any value we send)
+    // ABO: only send bid_strategy when non-default (LOWEST_COST_WITHOUT_CAP is Meta's implicit default)
+    const aboStrategy = bid_strategy || "LOWEST_COST_WITHOUT_CAP";
     const payload = {
       access_token:     accessToken,
       campaign_id,
       name,
       optimization_goal,
       billing_event,
-      bid_strategy:     resolvedBidStrategy,
+      ...(!campaignHasBudget && aboStrategy !== "LOWEST_COST_WITHOUT_CAP" && { bid_strategy: aboStrategy }),
       status,
       targeting:        JSON.stringify(targeting),
       ...((!campaignHasBudget && daily_budget) && { daily_budget: String(daily_budget) }),

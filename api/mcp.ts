@@ -677,12 +677,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       try {
         const accessToken = process.env.META_ACCESS_TOKEN;
 
-        // Fetch parent campaign to detect CBO and inherit bid_strategy
-        const campRes = await fetch(
-          `${META_GRAPH_BASE}/${campaign_id}?fields=daily_budget,lifetime_budget,bid_strategy&access_token=${encodeURIComponent(accessToken!)}`,
-          { redirect: "follow" }
-        );
-        const campData = await campRes.json() as any;
+        // Fetch parent campaign to detect CBO and get its bid_strategy
+        const campCtrl = new AbortController();
+        const campTimeout = setTimeout(() => campCtrl.abort(), 15000);
+        let campData: any;
+        try {
+          const campRes = await fetch(
+            `${META_GRAPH_BASE}/${campaign_id}?fields=daily_budget,lifetime_budget,bid_strategy&access_token=${encodeURIComponent(accessToken!)}`,
+            { redirect: "follow", signal: campCtrl.signal }
+          );
+          campData = await campRes.json();
+        } finally {
+          clearTimeout(campTimeout);
+        }
         if (campData.error) {
           const e = campData.error;
           return { content: [{ type: "text", text: JSON.stringify({ success: false, error: `Could not fetch parent campaign: ${e.error_user_msg || e.message}`, code: e.code, subcode: e.error_subcode }) }], isError: true };
@@ -711,24 +718,40 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           ? { pixel_id, custom_event_type: custom_event_type || "PURCHASE" }
           : undefined;
 
-        // User's explicit bid_strategy takes priority over campaign-inherited value.
-        // Fallback chain: explicit param → campaign → LOWEST_COST_WITHOUT_CAP
-        const resolvedBidStrategy: string =
-          bid_strategy || campData.bid_strategy || "LOWEST_COST_WITHOUT_CAP";
-
-        // These strategies require bid_amount — return a clear error rather than letting Meta reject
+        // Strategies that require bid_amount
         const needsBidAmount = ["LOWEST_COST_WITH_BID_CAP", "COST_CAP", "TARGET_COST"];
-        if (needsBidAmount.includes(resolvedBidStrategy) && !bid_amount) {
-          return {
-            content: [{
-              type: "text",
-              text: JSON.stringify({
-                success: false,
-                error: `bid_amount is required when bid_strategy is ${resolvedBidStrategy}. Provide bid_amount in cents, or use bid_strategy: "LOWEST_COST_WITHOUT_CAP" to let Meta optimize without a cap.`,
-              }),
-            }],
-            isError: true,
-          };
+
+        // CBO: Meta IGNORES bid_strategy sent at ad-set level — the campaign-level strategy applies.
+        // Never send bid_strategy for CBO. Validate that campaign strategy doesn't require bid_amount.
+        // ABO: bid_strategy is set at ad-set level. LOWEST_COST_WITHOUT_CAP is Meta's default (don't send).
+        if (campaignHasBudget) {
+          const campStrategy: string | undefined = campData.bid_strategy;
+          if (campStrategy && needsBidAmount.includes(campStrategy) && !bid_amount) {
+            return {
+              content: [{
+                type: "text",
+                text: JSON.stringify({
+                  success: false,
+                  error: `This CBO campaign uses ${campStrategy} — bid_amount (in cents) is required for all ad sets. Provide bid_amount, or recreate the campaign with bid_strategy: LOWEST_COST_WITHOUT_CAP.`,
+                }),
+              }],
+              isError: true,
+            };
+          }
+        } else {
+          const aboStrategy = bid_strategy || "LOWEST_COST_WITHOUT_CAP";
+          if (needsBidAmount.includes(aboStrategy) && !bid_amount) {
+            return {
+              content: [{
+                type: "text",
+                text: JSON.stringify({
+                  success: false,
+                  error: `bid_amount is required when bid_strategy is ${aboStrategy}. Provide bid_amount in cents, or use bid_strategy: "LOWEST_COST_WITHOUT_CAP".`,
+                }),
+              }],
+              isError: true,
+            };
+          }
         }
 
         const params: Record<string, string> = {
@@ -737,23 +760,36 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           name,
           optimization_goal: resolvedOptGoal,
           billing_event: billing_event || "IMPRESSIONS",
-          bid_strategy: resolvedBidStrategy,
           status: status || "PAUSED",
           targeting: JSON.stringify(targeting),
         };
 
         if (!campaignHasBudget && daily_budget) params.daily_budget = String(daily_budget);
+        // CBO: never send bid_strategy (Meta uses campaign-level strategy, overrides any value we send)
+        // ABO: only send bid_strategy when it's non-default (LOWEST_COST_WITHOUT_CAP is Meta's implicit default)
+        if (!campaignHasBudget) {
+          const aboStrategy = bid_strategy || "LOWEST_COST_WITHOUT_CAP";
+          if (aboStrategy !== "LOWEST_COST_WITHOUT_CAP") params.bid_strategy = aboStrategy;
+        }
         if (bid_amount) params.bid_amount = String(bid_amount);
         if (promoted_object) params.promoted_object = JSON.stringify(promoted_object);
         if (start_time) params.start_time = start_time;
         if (end_time) params.end_time = end_time;
 
-        const response = await fetch(`${META_GRAPH_BASE}/act_${account_id}/adsets`, {
-          method: "POST",
-          headers: { "Content-Type": "application/x-www-form-urlencoded" },
-          body: new URLSearchParams(params).toString(),
-        });
-        const data = await response.json() as any;
+        const adsetCtrl = new AbortController();
+        const adsetTimeout = setTimeout(() => adsetCtrl.abort(), 15000);
+        let data: any;
+        try {
+          const response = await fetch(`${META_GRAPH_BASE}/act_${account_id}/adsets`, {
+            method: "POST",
+            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+            body: new URLSearchParams(params).toString(),
+            signal: adsetCtrl.signal,
+          });
+          data = await response.json();
+        } finally {
+          clearTimeout(adsetTimeout);
+        }
         if (data.error) {
           const e = data.error;
           return { content: [{ type: "text", text: JSON.stringify({ success: false, error: e.error_user_msg || e.message, code: e.code, subcode: e.error_subcode, user_title: e.error_user_title, trace_id: e.fbtrace_id }) }], isError: true };
