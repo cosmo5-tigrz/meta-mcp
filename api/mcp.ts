@@ -573,15 +573,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         if (!imageResponse.ok) {
           return { content: [{ type: "text", text: JSON.stringify({ success: false, error: `Failed to download image from URL (HTTP ${imageResponse.status}). For Google Drive, use a direct download URL: https://drive.google.com/uc?id=FILE_ID&export=download` }) }], isError: true };
         }
-        const contentType = imageResponse.headers.get("content-type") || "";
-        if (!contentType.startsWith("image/")) {
-          return { content: [{ type: "text", text: JSON.stringify({ success: false, error: `URL did not return an image (content-type: ${contentType || "unknown"}). Ensure the URL points directly to an image file.` }) }], isError: true };
+        const rawContentType = imageResponse.headers.get("content-type") || "";
+        const baseContentType = rawContentType.split(";")[0].trim();
+        if (!baseContentType.startsWith("image/")) {
+          return { content: [{ type: "text", text: JSON.stringify({ success: false, error: `URL did not return an image (content-type: ${rawContentType || "unknown"}). Ensure the URL points directly to an image file.` }) }], isError: true };
         }
+        const mimeToExt: Record<string, string> = { "image/jpeg": ".jpg", "image/png": ".png", "image/gif": ".gif", "image/webp": ".webp" };
+        const ext = mimeToExt[baseContentType] || ".jpg";
+        const rawName = name || file_url.split("/").pop()?.split("?")[0] || "image";
+        const fileName = rawName.includes(".") ? rawName : rawName + ext;
         const imageBuffer = await imageResponse.arrayBuffer();
-        const fileName = name || file_url.split("/").pop()?.split("?")[0] || "image.jpg";
         const form = new FormData();
         form.append("access_token", accessToken!);
-        form.append("filename", new Blob([imageBuffer], { type: contentType }), fileName);
+        form.append("filename", new Blob([imageBuffer], { type: baseContentType }), fileName);
         const response = await fetch(`${META_GRAPH_BASE}/act_${account_id}/adimages`, { method: "POST", body: form });
         const data = await response.json() as any;
         if (data.error) {
@@ -655,7 +659,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       daily_budget:      z.number().optional().describe("Daily budget in cents (e.g. 500 = 5€). Required for ABO campaigns; must be omitted for CBO campaigns."),
       optimization_goal: z.string().optional().describe("e.g. OFFSITE_CONVERSIONS, LINK_CLICKS, REACH (default: OFFSITE_CONVERSIONS)"),
       billing_event:     z.string().optional().describe("Default: IMPRESSIONS"),
-      bid_strategy:      z.string().optional().describe("Inherited from campaign if omitted"),
+      bid_strategy:      z.string().optional().describe("Bid strategy override. Inherited from campaign if omitted. Default: LOWEST_COST_WITHOUT_CAP"),
+      bid_amount:        z.number().optional().describe("Bid amount in cents. Required when bid_strategy is LOWEST_COST_WITH_BID_CAP or COST_CAP."),
       status:            z.enum(["ACTIVE", "PAUSED"]).optional().describe("Initial status (default: PAUSED)"),
       pixel_id:          z.string().optional().describe("Meta Pixel ID for conversion tracking"),
       custom_event_type: z.string().optional().describe("e.g. PURCHASE, ADD_TO_CART (default: PURCHASE)"),
@@ -668,7 +673,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       start_time:        z.string().optional().describe("Start date ISO 8601"),
       end_time:          z.string().optional().describe("End date ISO 8601"),
     },
-    async ({ account_id, campaign_id, name, daily_budget, optimization_goal, billing_event, bid_strategy, status, pixel_id, custom_event_type, countries, age_min, age_max, genders, custom_audiences, excluded_audiences, start_time, end_time }) => {
+    async ({ account_id, campaign_id, name, daily_budget, optimization_goal, billing_event, bid_strategy, bid_amount, status, pixel_id, custom_event_type, countries, age_min, age_max, genders, custom_audiences, excluded_audiences, start_time, end_time }) => {
       try {
         const accessToken = process.env.META_ACCESS_TOKEN;
 
@@ -706,18 +711,27 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           ? { pixel_id, custom_event_type: custom_event_type || "PURCHASE" }
           : undefined;
 
+        // Inherit bid_strategy from campaign, but fall back to LOWEST_COST_WITHOUT_CAP
+        // if LOWEST_COST_WITH_BID_CAP is inherited without a bid_amount (Meta would reject)
+        const inheritedStrategy = campData.bid_strategy as string | undefined;
+        const resolvedBidStrategy =
+          inheritedStrategy === "LOWEST_COST_WITH_BID_CAP" && !bid_amount
+            ? "LOWEST_COST_WITHOUT_CAP"
+            : inheritedStrategy || bid_strategy || "LOWEST_COST_WITHOUT_CAP";
+
         const params: Record<string, string> = {
           access_token: accessToken!,
           campaign_id,
           name,
           optimization_goal: resolvedOptGoal,
           billing_event: billing_event || "IMPRESSIONS",
-          bid_strategy: campData.bid_strategy || bid_strategy || "LOWEST_COST_WITHOUT_CAP",
+          bid_strategy: resolvedBidStrategy,
           status: status || "PAUSED",
           targeting: JSON.stringify(targeting),
         };
 
         if (!campaignHasBudget && daily_budget) params.daily_budget = String(daily_budget);
+        if (bid_amount) params.bid_amount = String(bid_amount);
         if (promoted_object) params.promoted_object = JSON.stringify(promoted_object);
         if (start_time) params.start_time = start_time;
         if (end_time) params.end_time = end_time;

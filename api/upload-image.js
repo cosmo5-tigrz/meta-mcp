@@ -42,21 +42,26 @@ export default async function handler(req, res) {
       });
     }
 
-    const contentType = imageResponse.headers.get("content-type") || "";
-    if (!contentType.startsWith("image/")) {
+    const rawContentType = imageResponse.headers.get("content-type") || "";
+    const baseContentType = rawContentType.split(";")[0].trim();
+    if (!baseContentType.startsWith("image/")) {
       return res.status(400).json({
         success: false,
-        error: `URL did not return an image (content-type: ${contentType || "unknown"}). Ensure the URL points directly to an image file.`,
+        error: `URL did not return an image (content-type: ${rawContentType || "unknown"}). Ensure the URL points directly to an image file.`,
       });
     }
 
+    const mimeToExt = { "image/jpeg": ".jpg", "image/png": ".png", "image/gif": ".gif", "image/webp": ".webp" };
+    const ext = mimeToExt[baseContentType] || ".jpg";
+    const rawName = name || file_url.split("/").pop()?.split("?")[0] || "image";
+    const fileName = rawName.includes(".") ? rawName : rawName + ext;
+
     const imageBuffer  = await imageResponse.arrayBuffer();
-    const fileName     = name || file_url.split("/").pop()?.split("?")[0] || "image.jpg";
 
     // Step 2 — Upload to Meta as multipart/form-data (native FormData, Node 18+)
     const form = new FormData();
     form.append("access_token", accessToken);
-    form.append("filename", new Blob([imageBuffer], { type: contentType }), fileName);
+    form.append("filename", new Blob([imageBuffer], { type: baseContentType }), fileName);
 
     const response = await fetch(
       `${META_GRAPH_BASE}/act_${account_id}/adimages`,

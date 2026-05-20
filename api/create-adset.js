@@ -10,7 +10,8 @@
  *   optimization_goal   {string}   (optional) e.g. "OFFSITE_CONVERSIONS", "PURCHASE", "LINK_CLICKS"
  *                                  Defaults to "OFFSITE_CONVERSIONS"
  *   billing_event       {string}   (optional) Defaults to "IMPRESSIONS"
- *   bid_strategy        {string}   (optional) Defaults to "LOWEST_COST_WITHOUT_CAP"
+ *   bid_strategy        {string}   (optional) Defaults to "LOWEST_COST_WITHOUT_CAP". Inherited from campaign if not set.
+ *   bid_amount          {number}   (optional) Bid amount in cents. Required when bid_strategy is LOWEST_COST_WITH_BID_CAP or COST_CAP.
  *   status              {string}   (optional) "ACTIVE" | "PAUSED" (default: "PAUSED")
  *   pixel_id            {string}   (optional) Meta Pixel ID for conversion tracking
  *   custom_event_type   {string}   (optional) e.g. "PURCHASE", "ADD_TO_CART" (default: "PURCHASE")
@@ -50,6 +51,7 @@ export default async function handler(req, res) {
     optimization_goal   = "OFFSITE_CONVERSIONS",
     billing_event       = "IMPRESSIONS",
     bid_strategy        = "LOWEST_COST_WITHOUT_CAP",
+    bid_amount,
     status              = "PAUSED",
     pixel_id,
     custom_event_type   = "PURCHASE",
@@ -108,6 +110,14 @@ export default async function handler(req, res) {
       ? { pixel_id, custom_event_type }
       : undefined;
 
+    // Inherit bid_strategy from campaign, but fall back to LOWEST_COST_WITHOUT_CAP
+    // if LOWEST_COST_WITH_BID_CAP is inherited without a bid_amount (Meta would reject)
+    const inheritedStrategy = campData.bid_strategy;
+    const resolvedBidStrategy =
+      inheritedStrategy === "LOWEST_COST_WITH_BID_CAP" && !bid_amount
+        ? "LOWEST_COST_WITHOUT_CAP"
+        : inheritedStrategy || bid_strategy;
+
     // — Assemble payload —
     const payload = {
       access_token:     accessToken,
@@ -115,10 +125,11 @@ export default async function handler(req, res) {
       name,
       optimization_goal,
       billing_event,
-      bid_strategy:     campData.bid_strategy || bid_strategy,
+      bid_strategy:     resolvedBidStrategy,
       status,
       targeting:        JSON.stringify(targeting),
       ...((!campaignHasBudget && daily_budget) && { daily_budget: String(daily_budget) }),
+      ...(bid_amount && { bid_amount: String(bid_amount) }),
       ...(promoted_object && { promoted_object: JSON.stringify(promoted_object) }),
       ...(start_time && { start_time }),
       ...(end_time   && { end_time }),
