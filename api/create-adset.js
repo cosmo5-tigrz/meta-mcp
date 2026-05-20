@@ -110,13 +110,18 @@ export default async function handler(req, res) {
       ? { pixel_id, custom_event_type }
       : undefined;
 
-    // Inherit bid_strategy from campaign, but fall back to LOWEST_COST_WITHOUT_CAP
-    // if LOWEST_COST_WITH_BID_CAP is inherited without a bid_amount (Meta would reject)
-    const inheritedStrategy = campData.bid_strategy;
-    const resolvedBidStrategy =
-      inheritedStrategy === "LOWEST_COST_WITH_BID_CAP" && !bid_amount
-        ? "LOWEST_COST_WITHOUT_CAP"
-        : inheritedStrategy || bid_strategy;
+    // User's explicit bid_strategy takes priority over campaign-inherited value.
+    // Fallback chain: explicit param → campaign → LOWEST_COST_WITHOUT_CAP
+    const resolvedBidStrategy = bid_strategy || campData.bid_strategy || "LOWEST_COST_WITHOUT_CAP";
+
+    // These strategies require bid_amount — return a clear error rather than letting Meta reject
+    const needsBidAmount = ["LOWEST_COST_WITH_BID_CAP", "COST_CAP", "TARGET_COST"];
+    if (needsBidAmount.includes(resolvedBidStrategy) && !bid_amount) {
+      return res.status(400).json({
+        success: false,
+        error: `bid_amount is required when bid_strategy is ${resolvedBidStrategy}. Provide bid_amount in cents, or use bid_strategy: "LOWEST_COST_WITHOUT_CAP" to let Meta optimize without a cap.`,
+      });
+    }
 
     // — Assemble payload —
     const payload = {

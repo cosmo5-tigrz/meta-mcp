@@ -711,13 +711,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           ? { pixel_id, custom_event_type: custom_event_type || "PURCHASE" }
           : undefined;
 
-        // Inherit bid_strategy from campaign, but fall back to LOWEST_COST_WITHOUT_CAP
-        // if LOWEST_COST_WITH_BID_CAP is inherited without a bid_amount (Meta would reject)
-        const inheritedStrategy = campData.bid_strategy as string | undefined;
-        const resolvedBidStrategy =
-          inheritedStrategy === "LOWEST_COST_WITH_BID_CAP" && !bid_amount
-            ? "LOWEST_COST_WITHOUT_CAP"
-            : inheritedStrategy || bid_strategy || "LOWEST_COST_WITHOUT_CAP";
+        // User's explicit bid_strategy takes priority over campaign-inherited value.
+        // Fallback chain: explicit param → campaign → LOWEST_COST_WITHOUT_CAP
+        const resolvedBidStrategy: string =
+          bid_strategy || campData.bid_strategy || "LOWEST_COST_WITHOUT_CAP";
+
+        // These strategies require bid_amount — return a clear error rather than letting Meta reject
+        const needsBidAmount = ["LOWEST_COST_WITH_BID_CAP", "COST_CAP", "TARGET_COST"];
+        if (needsBidAmount.includes(resolvedBidStrategy) && !bid_amount) {
+          return {
+            content: [{
+              type: "text",
+              text: JSON.stringify({
+                success: false,
+                error: `bid_amount is required when bid_strategy is ${resolvedBidStrategy}. Provide bid_amount in cents, or use bid_strategy: "LOWEST_COST_WITHOUT_CAP" to let Meta optimize without a cap.`,
+              }),
+            }],
+            isError: true,
+          };
+        }
 
         const params: Record<string, string> = {
           access_token: accessToken!,
