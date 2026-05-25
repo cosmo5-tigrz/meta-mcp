@@ -160,33 +160,59 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     "create_campaign",
     "Create a new advertising campaign",
     {
-      account_id: z.string().describe("The ad account ID"),
-      name: z.string().describe("Campaign name"),
-      objective: z.string().describe("Campaign objective (OUTCOME_TRAFFIC, OUTCOME_LEADS, etc.)"),
-      status: z.enum(["ACTIVE", "PAUSED"]).optional().describe("Campaign status (defaults to PAUSED)"),
-      daily_budget: z.number().optional().describe("Daily budget in cents. Omit for ABO (budget set at ad set level)."),
-      lifetime_budget: z.number().optional().describe("Lifetime budget in cents. Requires end_time."),
-      end_time: z.string().optional().describe("Campaign end date ISO 8601. Required when using lifetime_budget."),
-      special_ad_categories: z.array(z.string()).optional().describe('Special ad categories e.g. ["NONE"] or ["HOUSING"]. Defaults to [].'),
+      account_id:            z.string().describe("The ad account ID"),
+      name:                  z.string().describe("Campaign name"),
+      objective:             z.string().describe("Campaign objective (OUTCOME_TRAFFIC, OUTCOME_SALES, OUTCOME_LEADS, etc.)"),
+      status:                z.enum(["ACTIVE", "PAUSED"]).optional().describe("Campaign status (defaults to PAUSED)"),
+      daily_budget:          z.number().optional().describe("Daily budget in cents (CBO). Omit for ABO."),
+      lifetime_budget:       z.number().optional().describe("Lifetime budget in cents (CBO). Requires end_time."),
+      end_time:              z.string().optional().describe("Campaign end date ISO 8601. Required with lifetime_budget."),
+      bid_strategy:          z.enum(["LOWEST_COST_WITHOUT_CAP", "LOWEST_COST_WITH_BID_CAP", "COST_CAP"]).optional().describe("Bid strategy for CBO campaigns (default: LOWEST_COST_WITHOUT_CAP). Ignored for ABO."),
+      special_ad_categories: z.array(z.string()).optional().describe('Special ad categories. Use [] or omit for standard campaigns; ["HOUSING"], ["EMPLOYMENT"], or ["CREDIT"] for regulated industries.'),
     },
-    async ({ account_id, name, objective, status, daily_budget, lifetime_budget, end_time, special_ad_categories }) => {
+    async ({ account_id, name, objective, status, daily_budget, lifetime_budget, end_time, bid_strategy, special_ad_categories }) => {
       try {
-        const client = getMetaClient();
-        const data: any = {
+        const accessToken = process.env.META_ACCESS_TOKEN;
+        const isCBO = !!(daily_budget || lifetime_budget);
+
+        const params: Record<string, string> = {
+          access_token: accessToken!,
           name,
           objective,
-          status: status || "PAUSED",
-          special_ad_categories: special_ad_categories || [],
-          buying_type: "AUCTION",
+          status:       status || "PAUSED",
+          buying_type:  "AUCTION",
+          special_ad_categories: JSON.stringify(special_ad_categories ?? []),
         };
-        if (daily_budget) data.daily_budget = daily_budget;
-        if (lifetime_budget) {
-          data.lifetime_budget = lifetime_budget;
-          if (end_time) data.stop_time = end_time;
+
+        if (daily_budget)    params.daily_budget = String(daily_budget);
+        if (lifetime_budget) { params.lifetime_budget = String(lifetime_budget); if (end_time) params.stop_time = end_time; }
+        // bid_strategy only makes sense at campaign level for CBO; ABO sets it at ad-set level
+        if (isCBO) params.bid_strategy = bid_strategy || "LOWEST_COST_WITHOUT_CAP";
+
+        const ctrl = new AbortController();
+        const timeout = setTimeout(() => ctrl.abort(), 15000);
+        let data: any;
+        try {
+          const resp = await fetch(`${META_GRAPH_BASE}/act_${account_id}/campaigns`, {
+            method: "POST",
+            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+            body: new URLSearchParams(params).toString(),
+            signal: ctrl.signal,
+          });
+          data = await resp.json();
+        } finally {
+          clearTimeout(timeout);
         }
-        const campaign = await client.createCampaign(account_id, data);
+
+        if (data.error) {
+          const e = data.error;
+          return {
+            content: [{ type: "text", text: JSON.stringify({ success: false, error: e.error_user_msg || e.message, code: e.code, subcode: e.error_subcode, user_title: e.error_user_title, trace_id: e.fbtrace_id }) }],
+            isError: true,
+          };
+        }
         return {
-          content: [{ type: "text", text: JSON.stringify({ success: true, campaign }) }],
+          content: [{ type: "text", text: JSON.stringify({ success: true, campaign_id: data.id, name, objective, cbo: isCBO, bid_strategy: isCBO ? (bid_strategy || "LOWEST_COST_WITHOUT_CAP") : null }) }],
         };
       } catch (error) {
         return metaErrResponse(error);
@@ -638,13 +664,38 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           if (!cards || !cards.length) throw new Error("cards[] is required for format=carousel");
           object_story_spec = { page_id, link_data: { link, ...(message && { message }), child_attachments: cards.map((c) => ({ link: c.link || link, image_hash: c.image_hash, name: c.title, ...(c.description && { description: c.description }), call_to_action: { type: c.call_to_action || call_to_action, value: { link: c.link || link } } })), multi_share_end_card: false } };
         }
-        const body = new URLSearchParams({ access_token: accessToken!, name, object_story_spec: JSON.stringify(object_story_spec), degrees_of_freedom_spec: JSON.stringify({ creative_features_spec: { standard_enhancements: { enroll_status: "OPT_OUT" } } }) });
-        const response = await fetch(`${META_GRAPH_BASE}/act_${account_id}/adcreatives`, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: body.toString() });
-        const data = await response.json() as any;
-        if (data.error) throw new Error(`Meta API error: ${data.error.message}`);
+        const body = new URLSearchParams({
+          access_token: accessToken!,
+          name,
+          object_story_spec: JSON.stringify(object_story_spec),
+          degrees_of_freedom_spec: JSON.stringify({ creative_features_spec: { standard_enhancements: { enroll_status: "OPT_OUT" } } }),
+        });
+
+        const creativeCtrl = new AbortController();
+        const creativeTimeout = setTimeout(() => creativeCtrl.abort(), 15000);
+        let data: any;
+        try {
+          const response = await fetch(`${META_GRAPH_BASE}/act_${account_id}/adcreatives`, {
+            method: "POST",
+            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+            body: body.toString(),
+            signal: creativeCtrl.signal,
+          });
+          data = await response.json();
+        } finally {
+          clearTimeout(creativeTimeout);
+        }
+
+        if (data.error) {
+          const e = data.error;
+          return {
+            content: [{ type: "text", text: JSON.stringify({ success: false, error: e.error_user_msg || e.message, code: e.code, subcode: e.error_subcode, user_title: e.error_user_title, trace_id: e.fbtrace_id, object_story_spec_sent: object_story_spec }) }],
+            isError: true,
+          };
+        }
         return { content: [{ type: "text", text: JSON.stringify({ success: true, creative_id: data.id, name, format }) }] };
       } catch (error) {
-        return { content: [{ type: "text", text: `Error: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+        return metaErrResponse(error);
       }
     }
   );
