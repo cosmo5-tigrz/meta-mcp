@@ -128,24 +128,36 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     "get_insights",
     "Get performance insights for campaigns, ad sets, or ads",
     {
-      object_id: z.string().describe("The ID of the campaign, ad set, or ad"),
-      level: z.enum(["account", "campaign", "adset", "ad"]).describe("The level of insights"),
-      date_preset: z.string().optional().describe("Date preset like 'last_7d', 'last_30d'"),
+      object_id:   z.string().describe("The ID of the campaign, ad set, or ad"),
+      level:       z.enum(["account", "campaign", "adset", "ad"]).describe("The level of insights"),
+      date_preset: z.string().optional().describe("Date preset: last_7d, last_14d, last_30d, last_90d, maximum, etc. Mutually exclusive with time_range."),
+      time_range:  z.object({ since: z.string(), until: z.string() }).optional().describe('Custom date range {"since":"YYYY-MM-DD","until":"YYYY-MM-DD"}. Mutually exclusive with date_preset.'),
+      action_attribution_windows: z.array(
+        z.enum(["1d_click","7d_click","28d_click","1d_view","7d_view","28d_view","dda","default"])
+      ).optional().describe('Attribution windows for conversion metrics. Use ["7d_click"] for standard bilans. Defaults to account-level setting (often DDA) if omitted.'),
       fields: z.array(z.string()).optional().describe("Specific metrics to retrieve"),
-      limit: z.number().optional().describe("Number of results to return"),
+      limit:  z.number().optional().describe("Number of results to return"),
     },
-    async ({ object_id, level, date_preset, fields, limit }) => {
+    async ({ object_id, level, date_preset, time_range, action_attribution_windows, fields, limit }) => {
       try {
         const client = getMetaClient();
         const params: Record<string, any> = {
           level,
           limit: limit || 25,
-          date_preset: date_preset || "last_7d",
         };
+        // time_range and date_preset are mutually exclusive — time_range takes priority
+        if (time_range) {
+          params.time_range = time_range;
+        } else {
+          params.date_preset = date_preset || "last_7d";
+        }
         if (fields && fields.length > 0) params.fields = fields;
+        if (action_attribution_windows && action_attribution_windows.length > 0) {
+          params.action_attribution_windows = action_attribution_windows;
+        }
         const insights = await client.getInsights(object_id, params);
         return {
-          content: [{ type: "text", text: JSON.stringify({ success: true, insights, object_id, level }) }],
+          content: [{ type: "text", text: JSON.stringify({ success: true, insights, object_id, level, attribution_windows: action_attribution_windows || "account_default" }) }],
         };
       } catch (error) {
         return {
