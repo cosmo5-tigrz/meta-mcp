@@ -13,6 +13,7 @@ import { registerAudienceTools } from "./tools/audiences.js";
 import { registerCreativeTools } from "./tools/creatives.js";
 import { registerAdsTools } from "./tools/ads.js";
 import { registerOAuthTools } from "./tools/oauth.js";
+import { registerAuditTools } from "./tools/audit.js";
 import { registerCampaignResources } from "./resources/campaigns.js";
 import { registerInsightsResources } from "./resources/insights.js";
 import { registerAudienceResources } from "./resources/audiences.js";
@@ -92,6 +93,8 @@ async function main() {
     console.error("   ✅ Ads tools registered");
     registerOAuthTools(server, auth);
     console.error("   ✅ OAuth tools registered");
+    registerAuditTools(server, auth);
+    console.error("   ✅ Audit tools registered");
 
     // Register all resources
     console.error("📚 Registering resources...");
@@ -352,6 +355,7 @@ async function main() {
           "health_check",
           "get_capabilities",
           "get_ai_guidance",
+          "audit_naming_today",
         ],
         resources_available: [
           "meta://campaigns/{account_id}",
