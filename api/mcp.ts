@@ -1,6 +1,8 @@
 // @ts-nocheck
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { MetaApiClient } from "../src/meta-client.js";
+import { registerAuditTools } from "../src/tools/audit.js";
+import { AuthManager } from "../src/utils/auth.js";
 
 // Non-static strings prevent esbuild from bundling these packages at build time
 const _mcpPkg   = "@modelcontextprotocol/sdk/server/mcp.js";
@@ -908,6 +910,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
     }
   );
+
+  registerAuditTools(server, AuthManager.fromEnvironment());
 
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
   await server.connect(transport);
