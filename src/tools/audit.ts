@@ -19,7 +19,7 @@ async function graphGet<T = any>(
 
   let url: string;
   if (pathOrUrl.startsWith("http")) {
-    url = pathOrUrl; // URL de pagination déjà signée (access_token inclus)
+    url = pathOrUrl;
   } else {
     const u = new URL(`${GRAPH}/${pathOrUrl}`);
     for (const [k, v] of Object.entries(params)) {
@@ -62,6 +62,28 @@ async function graphGetAll<T = any>(
     out.push(...(page.data ?? []));
   }
   return out;
+}
+
+/* ------------------------------------------------------------------ */
+/* Concurrence limitée (pas de dépendance externe)                     */
+/* ------------------------------------------------------------------ */
+
+async function mapLimit<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let i = 0;
+  async function worker() {
+    for (;;) {
+      const idx = i++;
+      if (idx >= items.length) return;
+      results[idx] = await fn(items[idx]);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
 }
 
 /* ------------------------------------------------------------------ */
@@ -115,23 +137,36 @@ function namingErrors(name: string): string[] {
 }
 
 /* ------------------------------------------------------------------ */
-/* Cœur de l'audit                                                     */
+/* Cœur de l'audit — parallèle, avec filtre optionnel par compte       */
 /* ------------------------------------------------------------------ */
 
 type CampaignInsight = { campaign_name: string; spend?: string };
 
 async function auditNaming(
   auth: AuthManager,
-  opts?: { date_preset?: string; include_clean?: boolean },
+  opts?: {
+    date_preset?: string;
+    include_clean?: boolean;
+    account_ids?: string[];
+    concurrency?: number;
+  },
 ) {
   const date_preset = opts?.date_preset ?? "today";
   const include_clean = opts?.include_clean ?? false;
+  const concurrency = opts?.concurrency ?? 10;
 
-  const accounts = await listActiveAdAccounts(auth);
+  let accounts = await listActiveAdAccounts(auth);
+  if (opts?.account_ids?.length) {
+    const wanted = new Set(
+      opts.account_ids.map((a) => (a.startsWith("act_") ? a : `act_${a}`)),
+    );
+    accounts = accounts.filter((a) => wanted.has(a.id));
+  }
+
   const rows: any[] = [];
   const skipped: { id: string; name: string; reason: string }[] = [];
 
-  for (const acct of accounts) {
+  await mapLimit(accounts, concurrency, async (acct) => {
     try {
       const camps = await graphGetAll<CampaignInsight>(auth, `${acct.id}/insights`, {
         level: "campaign",
@@ -155,7 +190,7 @@ async function auditNaming(
     } catch (e: any) {
       skipped.push({ id: acct.id, name: acct.name, reason: e.message ?? String(e) });
     }
-  }
+  });
 
   return {
     generated_at: new Date().toISOString(),
@@ -186,10 +221,28 @@ export function registerAuditTools(server: any, auth: AuthManager) {
         .boolean()
         .optional()
         .describe("Inclure aussi les campagnes conformes (défaut: false)."),
+      account_ids: z
+        .array(z.string())
+        .optional()
+        .describe("Sous-ensemble de comptes (act_... ou ID brut). Vide = tous les comptes ouverts."),
+      concurrency: z
+        .number()
+        .optional()
+        .describe("Nombre d'appels concurrents (défaut: 10)."),
     },
-    async ({ date_preset, include_clean }: { date_preset?: string; include_clean?: boolean }) => {
+    async ({
+      date_preset,
+      include_clean,
+      account_ids,
+      concurrency,
+    }: {
+      date_preset?: string;
+      include_clean?: boolean;
+      account_ids?: string[];
+      concurrency?: number;
+    }) => {
       try {
-        const result = await auditNaming(auth, { date_preset, include_clean });
+        const result = await auditNaming(auth, { date_preset, include_clean, account_ids, concurrency });
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
       } catch (e: any) {
         return {

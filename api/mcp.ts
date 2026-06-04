@@ -4,6 +4,8 @@ import { MetaApiClient } from "../src/meta-client.js";
 import { registerAuditTools } from "../src/tools/audit.js";
 import { AuthManager } from "../src/utils/auth.js";
 
+export const maxDuration = 300;
+
 // Non-static strings prevent esbuild from bundling these packages at build time
 const _mcpPkg   = "@modelcontextprotocol/sdk/server/mcp.js";
 const _httpPkg  = "@modelcontextprotocol/sdk/server/streamableHttp.js";
@@ -65,8 +67,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     {},
     async () => {
       try {
-        const client = getMetaClient();
-        const accounts = await client.getAdAccounts();
+        const auth = AuthManager.fromEnvironment();
+        const GRAPH = `${auth.getBaseUrl()}/${auth.getApiVersion()}`;
+        const TOKEN = auth.getAccessToken();
+
+        const accounts: any[] = [];
+        let url: string | undefined =
+          `${GRAPH}/me/adaccounts?fields=id,name,account_status,currency,timezone_name,balance,business&limit=200&access_token=${TOKEN}`;
+
+        let guard = 0;
+        while (url && guard++ < 100) {
+          const res = await fetch(url);
+          const json = await res.json();
+          if (json.error) throw new Error(`(#${json.error.code}) ${json.error.message}`);
+          accounts.push(...(json.data ?? []));
+          url = json.paging?.next;
+        }
+
         return {
           content: [
             {
