@@ -322,7 +322,7 @@ export class MetaApiClient {
     const queryParams: Record<string, any> = {
       fields:
         fields?.join(",") ||
-        "id,name,campaign_id,status,effective_status,created_time,updated_time,start_time,end_time,daily_budget,lifetime_budget,bid_amount,billing_event,optimization_goal",
+        "id,name,campaign_id,status,effective_status,created_time,updated_time,start_time,end_time,daily_budget,lifetime_budget,bid_amount,billing_event,optimization_goal,promoted_object{pixel_id,custom_event_type,pixel_rule}",
       ...paginationParams,
     };
 
@@ -721,7 +721,7 @@ export class MetaApiClient {
     const queryParams: Record<string, any> = {
       fields:
         fields?.join(",") ||
-        "id,name,adset_id,campaign_id,status,effective_status,created_time,updated_time,creative",
+        "id,name,adset_id,campaign_id,status,effective_status,created_time,updated_time,creative,tracking_specs",
       ...paginationParams,
     };
 

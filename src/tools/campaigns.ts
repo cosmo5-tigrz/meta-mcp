@@ -365,7 +365,7 @@ export function registerCampaignTools(
   // List Ad Sets Tool
   server.tool(
     "list_ad_sets",
-    "List all ad sets for a given campaign or ad account. Filter by status and paginate results. Returns ad set details including budget, targeting, and optimization settings.",
+    "List all ad sets for a given campaign or ad account. Filter by status and paginate results. Returns ad set details including budget, targeting, optimization settings, and pixel_id (populated for conversion-objective ad sets that have a promoted_object).",
     ListAdSetsSchema.shape,
     async ({ campaign_id, account_id, status, limit, after }) => {
       try {
@@ -404,6 +404,7 @@ export function registerCampaignTools(
           bid_amount: adSet.bid_amount,
           billing_event: adSet.billing_event,
           optimization_goal: adSet.optimization_goal,
+          pixel_id: (adSet as any).promoted_object?.pixel_id ?? null,
         }));
 
         const response = {
