@@ -6,8 +6,11 @@ import {
   UpdateCampaignSchema,
   DeleteCampaignSchema,
   ListAdSetsSchema,
+  GetAdSetSchema,
+  GetAccountOverviewSchema,
   CreateAdSetSchema,
 } from "../types/mcp-tools";
+import { PaginationHelper } from "../utils/pagination.js";
 
 export function setupCampaignTools(
   server: McpServer,
@@ -365,31 +368,18 @@ export function registerCampaignTools(
   // List Ad Sets Tool
   server.tool(
     "list_ad_sets",
-    "List all ad sets for a given campaign or ad account. Filter by status and paginate results. Returns ad set details including budget, targeting, optimization settings, and pixel_id (populated for conversion-objective ad sets that have a promoted_object).",
+    "List all ad sets for a given campaign or ad account. Returns full targeting (geo, age, gender, custom_audiences, excluded_custom_audiences), budget, schedule, bid_strategy, and promoted_object. Use fetch_all:true to auto-paginate up to 500 ad sets. Use effective_status to exclude PAUSED/WITH_ISSUES noise.",
     ListAdSetsSchema.shape,
-    async ({ campaign_id, account_id, status, limit, after }) => {
+    async ({ campaign_id, account_id, status, effective_status, limit, after, fetch_all }) => {
       try {
         if (!campaign_id && !account_id) {
           return {
-            content: [
-              {
-                type: "text",
-                text: "Error: Either campaign_id or account_id must be provided",
-              },
-            ],
+            content: [{ type: "text", text: "Error: Either campaign_id or account_id must be provided" }],
             isError: true,
           };
         }
 
-        const result = await metaClient.getAdSets({
-          campaignId: campaign_id,
-          accountId: account_id,
-          status,
-          limit,
-          after,
-        });
-
-        const adSets = result.data.map((adSet) => ({
+        const mapAdSet = (adSet: any) => ({
           id: adSet.id,
           name: adSet.name,
           campaign_id: adSet.campaign_id,
@@ -397,45 +387,124 @@ export function registerCampaignTools(
           effective_status: adSet.effective_status,
           created_time: adSet.created_time,
           updated_time: adSet.updated_time,
-          start_time: adSet.start_time,
-          end_time: adSet.end_time,
-          daily_budget: adSet.daily_budget,
-          lifetime_budget: adSet.lifetime_budget,
-          bid_amount: adSet.bid_amount,
+          start_time: adSet.start_time ?? null,
+          end_time: adSet.end_time ?? null,
+          daily_budget: adSet.daily_budget ?? null,
+          lifetime_budget: adSet.lifetime_budget ?? null,
+          bid_amount: adSet.bid_amount ?? null,
+          bid_strategy: adSet.bid_strategy ?? null,
           billing_event: adSet.billing_event,
           optimization_goal: adSet.optimization_goal,
-          pixel_id: (adSet as any).promoted_object?.pixel_id ?? null,
-        }));
+          targeting: adSet.targeting ?? null,
+          promoted_object: adSet.promoted_object ?? null,
+        });
 
-        const response = {
-          ad_sets: adSets,
-          pagination: {
-            has_next_page: result.hasNextPage,
-            has_previous_page: result.hasPreviousPage,
-            next_cursor: result.paging?.cursors?.after,
-            previous_cursor: result.paging?.cursors?.before,
-          },
-          total_count: adSets.length,
-        };
+        // Resolve effective_status filter: explicit array takes precedence over single status
+        const resolvedStatus = effective_status && effective_status.length > 0
+          ? effective_status
+          : status
+          ? [status]
+          : undefined;
+
+        if (fetch_all) {
+          const allData = await PaginationHelper.collectAllPages(
+            (paginationParams) =>
+              metaClient.getAdSets({
+                campaignId: campaign_id,
+                accountId: account_id,
+                status: resolvedStatus as any,
+                limit: 100,
+                ...paginationParams,
+              }),
+            {},
+            5,   // max 5 pages × 100 = 500 items
+            500
+          );
+
+          return {
+            content: [{
+              type: "text",
+              text: JSON.stringify({
+                ad_sets: allData.map(mapAdSet),
+                pagination: { fetched_all: true },
+                total_count: allData.length,
+              }, null, 2),
+            }],
+          };
+        }
+
+        const result = await metaClient.getAdSets({
+          campaignId: campaign_id,
+          accountId: account_id,
+          status: resolvedStatus as any,
+          limit,
+          after,
+        });
 
         return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify(response, null, 2),
-            },
-          ],
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              ad_sets: result.data.map(mapAdSet),
+              pagination: {
+                has_next_page: result.hasNextPage,
+                has_previous_page: result.hasPreviousPage,
+                next_cursor: result.paging?.cursors?.after ?? null,
+                previous_cursor: result.paging?.cursors?.before ?? null,
+              },
+              total_count: result.data.length,
+            }, null, 2),
+          }],
         };
       } catch (error) {
         const errorMessage =
           error instanceof Error ? error.message : "Unknown error occurred";
         return {
-          content: [
-            {
-              type: "text",
-              text: `Error listing ad sets: ${errorMessage}`,
-            },
-          ],
+          content: [{ type: "text", text: `Error listing ad sets: ${errorMessage}` }],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  // Get Ad Set Detail Tool
+  server.tool(
+    "get_adset",
+    "Get full details for a single ad set by ID, including complete targeting (geo, age, gender, custom_audiences, excluded_custom_audiences, flexible_spec, exclusions), budget, schedule, bid_strategy, and promoted_object. Use this to audit PROS/RTG/CRM exclusions.",
+    GetAdSetSchema.shape,
+    async ({ adset_id }) => {
+      try {
+        const adSet = await metaClient.getAdSet(adset_id);
+
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              id: adSet.id,
+              name: adSet.name,
+              campaign_id: adSet.campaign_id,
+              status: adSet.status,
+              effective_status: adSet.effective_status,
+              created_time: adSet.created_time,
+              updated_time: adSet.updated_time,
+              start_time: adSet.start_time ?? null,
+              end_time: adSet.end_time ?? null,
+              daily_budget: adSet.daily_budget ?? null,
+              lifetime_budget: adSet.lifetime_budget ?? null,
+              bid_amount: adSet.bid_amount ?? null,
+              bid_strategy: adSet.bid_strategy ?? null,
+              billing_event: adSet.billing_event,
+              optimization_goal: adSet.optimization_goal,
+              targeting: adSet.targeting ?? null,
+              promoted_object: adSet.promoted_object ?? null,
+            }, null, 2),
+          }],
+        };
+      } catch (error) {
+        const errorMessage =
+          error instanceof Error ? error.message : "Unknown error occurred";
+        return {
+          content: [{ type: "text", text: `Error getting ad set: ${errorMessage}` }],
           isError: true,
         };
       }
@@ -1581,6 +1650,86 @@ export function registerCampaignTools(
               text: `Error verifying account setup: ${errorMessage}`,
             },
           ],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  // Get Account Overview Tool
+  server.tool(
+    "get_account_overview",
+    "Composite snapshot: account details + insights summary (spend, impressions, clicks, ROAS) + active campaign count + ad set structure — all in one call. Ideal for quick audits and morning briefings.",
+    GetAccountOverviewSchema.shape,
+    async ({ account_id, date_preset }) => {
+      try {
+        const normalizedAccountId = account_id.startsWith("act_")
+          ? account_id
+          : `act_${account_id}`;
+
+        const [accountInfo, insightsResult, campaignsResult] = await Promise.allSettled([
+          metaClient.getAdAccount(account_id),
+          metaClient.getInsights(normalizedAccountId, {
+            level: "account",
+            date_preset,
+            action_attribution_windows: ["7d_click"],
+            fields: [
+              "impressions", "clicks", "spend", "reach", "frequency",
+              "ctr", "cpc", "cpm", "actions", "cost_per_action_type",
+            ],
+            limit: 1,
+          }),
+          metaClient.getCampaigns(account_id, {
+            status: ["ACTIVE"],
+            limit: 100,
+          }),
+        ]);
+
+        const account = accountInfo.status === "fulfilled" ? accountInfo.value : null;
+        const insights = insightsResult.status === "fulfilled" ? insightsResult.value.data[0] : null;
+        const campaigns = campaignsResult.status === "fulfilled" ? campaignsResult.value : null;
+
+        const purchases = insights?.actions?.find((a: any) => a.action_type === "purchase");
+        const purchaseCost = insights?.cost_per_action_type?.find((a: any) => a.action_type === "purchase");
+        const spend = parseFloat(insights?.spend || "0");
+        const purchaseValue = purchases ? parseFloat(purchases.value) : 0;
+        const roas = spend > 0 && purchaseValue > 0 ? (purchaseValue / spend).toFixed(2) : null;
+
+        const response = {
+          account: account
+            ? { id: account.id, name: account.name, currency: account.currency, timezone: account.timezone_name, status: account.account_status }
+            : { error: accountInfo.status === "rejected" ? (accountInfo.reason as Error).message : "unavailable" },
+          insights_summary: {
+            date_preset,
+            attribution: "7d_click",
+            spend: insights?.spend ?? null,
+            impressions: insights?.impressions ?? null,
+            clicks: insights?.clicks ?? null,
+            reach: insights?.reach ?? null,
+            frequency: insights?.frequency ?? null,
+            ctr: insights?.ctr ?? null,
+            cpc: insights?.cpc ?? null,
+            cpm: insights?.cpm ?? null,
+            purchases: purchases?.value ?? null,
+            cost_per_purchase: purchaseCost?.value ?? null,
+            roas,
+            error: insightsResult.status === "rejected" ? (insightsResult.reason as Error).message : null,
+          },
+          structure: {
+            active_campaigns: campaigns?.data.length ?? null,
+            campaigns_truncated: campaigns?.hasNextPage ?? false,
+            error: campaignsResult.status === "rejected" ? (campaignsResult.reason as Error).message : null,
+          },
+        };
+
+        return {
+          content: [{ type: "text", text: JSON.stringify(response, null, 2) }],
+        };
+      } catch (error) {
+        const errorMessage =
+          error instanceof Error ? error.message : "Unknown error occurred";
+        return {
+          content: [{ type: "text", text: `Error getting account overview: ${errorMessage}` }],
           isError: true,
         };
       }

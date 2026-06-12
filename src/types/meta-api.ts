@@ -55,9 +55,17 @@ export interface AdSet {
   daily_budget?: string;
   lifetime_budget?: string;
   bid_amount?: string;
+  bid_strategy?: string;
   billing_event?: string;
   optimization_goal?: string;
   targeting?: AdTargeting;
+  promoted_object?: {
+    pixel_id?: string;
+    custom_event_type?: string;
+    pixel_rule?: string;
+    page_id?: string;
+    application_id?: string;
+  };
 }
 
 export interface Ad {
@@ -95,12 +103,16 @@ export interface AdTargeting {
     countries?: string[];
     regions?: Array<{ key: string }>;
     cities?: Array<{ key: string; radius?: number; distance_unit?: string }>;
+    location_types?: string[];
   };
   interests?: Array<{ id: string; name: string }>;
   behaviors?: Array<{ id: string; name: string }>;
-  custom_audiences?: Array<{ id: string }>;
-  excluded_custom_audiences?: Array<{ id: string }>;
+  custom_audiences?: Array<{ id: string; name?: string }>;
+  excluded_custom_audiences?: Array<{ id: string; name?: string }>;
   lookalike_audiences?: Array<{ id: string }>;
+  flexible_spec?: Array<Record<string, any>>;
+  exclusions?: Record<string, any>;
+  targeting_automation?: Record<string, any>;
   device_platforms?: string[];
   publisher_platforms?: string[];
   facebook_positions?: string[];
@@ -140,15 +152,22 @@ export interface CustomAudience {
   name: string;
   description?: string;
   subtype: string;
-  approximate_count?: number;
+  approximate_count?: number; // deprecated
+  approximate_count_lower_bound?: number;
+  approximate_count_upper_bound?: number;
   data_source?: {
     type: string;
     sub_type?: string;
   };
   retention_days?: number;
   rule?: any;
-  creation_time: string;
+  creation_time?: string;
+  time_updated?: string;
   operation_status?: {
+    code: number;
+    description: string;
+  };
+  delivery_status?: {
     code: number;
     description: string;
   };

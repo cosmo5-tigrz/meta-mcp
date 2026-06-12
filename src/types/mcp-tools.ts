@@ -123,13 +123,33 @@ export const ListAdSetsSchema = z.object({
     .enum(["ACTIVE", "PAUSED", "DELETED", "ARCHIVED"])
     .optional()
     .describe("Filter by ad set status"),
+  effective_status: z
+    .array(z.enum(["ACTIVE", "PAUSED", "DELETED", "ARCHIVED", "IN_PROCESS", "WITH_ISSUES"]))
+    .optional()
+    .describe("Filter by one or more effective statuses (multi-value, excludes noisy states like OLD/WITH_ISSUES)"),
   limit: z
     .number()
     .min(1)
     .max(100)
     .default(25)
-    .describe("Number of ad sets to return"),
+    .describe("Number of ad sets to return per page"),
   after: z.string().optional().describe("Pagination cursor for next page"),
+  fetch_all: z
+    .boolean()
+    .optional()
+    .describe("Auto-paginate and return all ad sets up to 500 (ignores limit/after when true)"),
+});
+
+export const GetAdSetSchema = z.object({
+  adset_id: z.string().describe("Ad Set ID to retrieve"),
+});
+
+export const GetAccountOverviewSchema = z.object({
+  account_id: z.string().describe("Meta Ad Account ID (with or without act_ prefix)"),
+  date_preset: z
+    .enum(["today", "yesterday", "last_7d", "last_14d", "last_28d", "last_30d", "last_month", "last_quarter"])
+    .default("last_30d")
+    .describe("Date preset for the insights summary"),
 });
 
 export const CreateAdSetSchema = z.object({
@@ -388,13 +408,14 @@ export const GetInsightsSchema = z.object({
       ])
     )
     .optional()
-    .describe("Attribution windows to use for conversion metrics"),
+    .describe("Attribution windows (defaults to ['7d_click'] to avoid DDA over-counting)"),
   limit: z
     .number()
     .min(1)
     .max(100)
     .default(25)
-    .describe("Number of insights to return"),
+    .describe("Number of insights to return per page"),
+  after: z.string().optional().describe("Pagination cursor for next page"),
 });
 
 export const ComparePerformanceSchema = z.object({
@@ -485,8 +506,12 @@ export const ListAudiencesSchema = z.object({
     .min(1)
     .max(100)
     .default(25)
-    .describe("Number of audiences to return"),
+    .describe("Number of audiences to return per page"),
   after: z.string().optional().describe("Pagination cursor for next page"),
+  fetch_all: z
+    .boolean()
+    .optional()
+    .describe("Auto-paginate and return all audiences up to 500 (ignores limit/after when true)"),
 });
 
 export const CreateCustomAudienceSchema = z.object({
@@ -975,6 +1000,8 @@ export type CreateCampaignParams = z.infer<typeof CreateCampaignSchema>;
 export type UpdateCampaignParams = z.infer<typeof UpdateCampaignSchema>;
 export type DeleteCampaignParams = z.infer<typeof DeleteCampaignSchema>;
 export type ListAdSetsParams = z.infer<typeof ListAdSetsSchema>;
+export type GetAdSetParams = z.infer<typeof GetAdSetSchema>;
+export type GetAccountOverviewParams = z.infer<typeof GetAccountOverviewSchema>;
 export type CreateAdSetParams = z.infer<typeof CreateAdSetSchema>;
 export type GetInsightsParams = z.infer<typeof GetInsightsSchema>;
 export type ComparePerformanceParams = z.infer<typeof ComparePerformanceSchema>;

@@ -6,6 +6,7 @@ import {
   CreateLookalikeAudienceSchema,
   EstimateAudienceSizeSchema,
 } from "../types/mcp-tools";
+import { PaginationHelper } from "../utils/pagination.js";
 
 export function setupAudienceTools(
   server: McpServer,
@@ -21,68 +22,84 @@ export function registerAudienceTools(
   // List Audiences Tool
   server.tool(
     "list_audiences",
-    "List custom and lookalike audiences for an ad account",
+    "List custom and lookalike audiences for an ad account. Returns approximate_count_lower_bound/upper_bound, operation_status, delivery_status, retention_days, data_source, time_updated. Use fetch_all:true to auto-paginate up to 500 audiences.",
     ListAudiencesSchema.shape,
-    async ({ account_id, type, limit, after }) => {
+    async ({ account_id, type, limit, after, fetch_all }) => {
       try {
-        const result = await metaClient.getCustomAudiences(account_id, {
-          limit,
-          after,
-        });
-
-        // Filter by type if specified
-        let audiences = result.data;
-        if (type) {
-          audiences = audiences.filter((audience) => {
-            if (type === "custom") return audience.subtype !== "LOOKALIKE";
-            if (type === "lookalike") return audience.subtype === "LOOKALIKE";
-            return true; // 'saved' would need different API endpoint
-          });
-        }
-
-        const formattedAudiences = audiences.map((audience) => ({
+        const formatAudience = (audience: any) => ({
           id: audience.id,
           name: audience.name,
           description: audience.description,
           type: audience.subtype === "LOOKALIKE" ? "lookalike" : "custom",
           subtype: audience.subtype,
-          approximate_count: audience.approximate_count,
-          data_source: audience.data_source,
-          retention_days: audience.retention_days,
-          creation_time: audience.creation_time,
-          operation_status: audience.operation_status,
-        }));
+          approximate_count_lower_bound: audience.approximate_count_lower_bound ?? null,
+          approximate_count_upper_bound: audience.approximate_count_upper_bound ?? null,
+          data_source: audience.data_source ?? null,
+          retention_days: audience.retention_days ?? null,
+          time_updated: audience.time_updated ?? null,
+          operation_status: audience.operation_status ?? null,
+          delivery_status: audience.delivery_status ?? null,
+        });
 
-        const response = {
-          audiences: formattedAudiences,
-          pagination: {
-            has_next_page: result.hasNextPage,
-            has_previous_page: result.hasPreviousPage,
-            next_cursor: result.paging?.cursors?.after,
-            previous_cursor: result.paging?.cursors?.before,
-          },
-          total_count: formattedAudiences.length,
-          filter_applied: type || "all",
+        const applyTypeFilter = (audiences: any[]) => {
+          if (!type) return audiences;
+          return audiences.filter((a) => {
+            if (type === "custom") return a.subtype !== "LOOKALIKE";
+            if (type === "lookalike") return a.subtype === "LOOKALIKE";
+            return true;
+          });
         };
 
-        return {
-          content: [
-            {
+        if (fetch_all) {
+          const allData = await PaginationHelper.collectAllPages(
+            (paginationParams) =>
+              metaClient.getCustomAudiences(account_id, {
+                limit: 100,
+                ...paginationParams,
+              }),
+            {},
+            5,   // max 5 pages × 100 = 500
+            500
+          );
+
+          const filtered = applyTypeFilter(allData);
+          return {
+            content: [{
               type: "text",
-              text: JSON.stringify(response, null, 2),
-            },
-          ],
+              text: JSON.stringify({
+                audiences: filtered.map(formatAudience),
+                pagination: { fetched_all: true },
+                total_count: filtered.length,
+                filter_applied: type || "all",
+              }, null, 2),
+            }],
+          };
+        }
+
+        const result = await metaClient.getCustomAudiences(account_id, { limit, after });
+        const filtered = applyTypeFilter(result.data);
+
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              audiences: filtered.map(formatAudience),
+              pagination: {
+                has_next_page: result.hasNextPage,
+                has_previous_page: result.hasPreviousPage,
+                next_cursor: result.paging?.cursors?.after ?? null,
+                previous_cursor: result.paging?.cursors?.before ?? null,
+              },
+              total_count: filtered.length,
+              filter_applied: type || "all",
+            }, null, 2),
+          }],
         };
       } catch (error) {
         const errorMessage =
           error instanceof Error ? error.message : "Unknown error occurred";
         return {
-          content: [
-            {
-              type: "text",
-              text: `Error listing audiences: ${errorMessage}`,
-            },
-          ],
+          content: [{ type: "text", text: `Error listing audiences: ${errorMessage}` }],
           isError: true,
         };
       }

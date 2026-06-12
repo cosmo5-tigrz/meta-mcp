@@ -322,7 +322,7 @@ export class MetaApiClient {
     const queryParams: Record<string, any> = {
       fields:
         fields?.join(",") ||
-        "id,name,campaign_id,status,effective_status,created_time,updated_time,start_time,end_time,daily_budget,lifetime_budget,bid_amount,billing_event,optimization_goal,promoted_object{pixel_id,custom_event_type,pixel_rule}",
+        "id,name,campaign_id,status,effective_status,created_time,updated_time,start_time,end_time,daily_budget,lifetime_budget,bid_amount,bid_strategy,billing_event,optimization_goal,targeting{geo_locations,age_min,age_max,genders,custom_audiences,excluded_custom_audiences,flexible_spec,exclusions,targeting_automation},promoted_object{pixel_id,custom_event_type,pixel_rule,page_id}",
       ...paginationParams,
     };
 
@@ -340,6 +340,17 @@ export class MetaApiClient {
     );
 
     return PaginationHelper.parsePaginatedResponse(response);
+  }
+
+  async getAdSet(adSetId: string): Promise<AdSet> {
+    const fields = [
+      "id,name,campaign_id,status,effective_status,created_time,updated_time",
+      "start_time,end_time,daily_budget,lifetime_budget,bid_amount,bid_strategy",
+      "billing_event,optimization_goal",
+      "targeting{geo_locations,age_min,age_max,genders,custom_audiences,excluded_custom_audiences,flexible_spec,exclusions,targeting_automation}",
+      "promoted_object{pixel_id,custom_event_type,pixel_rule,page_id}",
+    ].join(",");
+    return this.makeRequest<AdSet>(`${adSetId}?fields=${fields}`);
   }
 
   async createAdSet(
@@ -508,7 +519,7 @@ export class MetaApiClient {
     const queryParams: Record<string, any> = {
       fields:
         fields?.join(",") ||
-        "id,name,description,subtype,approximate_count,data_source,retention_days,creation_time,operation_status",
+        "id,name,subtype,approximate_count_lower_bound,approximate_count_upper_bound,operation_status,delivery_status,retention_days,data_source,time_updated",
       ...paginationParams,
     };
 

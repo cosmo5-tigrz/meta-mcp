@@ -130,9 +130,19 @@ export class MetaApiErrorHandler {
       return new MetaPermissionError(message, code, error_subcode);
     }
 
-    // Validation errors
+    // Validation errors — include subcode and faulty field to pinpoint the broken field
     if (code === 100) {
-      return new MetaValidationError(message, code, error_subcode);
+      const subcodeStr = error_subcode ? ` [subcode: ${error_subcode}]` : "";
+      const rawErrData = (errorData as any)?.error?.error_data;
+      const faultyField = rawErrData?.blame_field_specs?.[0]?.[0]
+        ?? rawErrData?.field
+        ?? null;
+      const faultyFieldStr = faultyField ? ` [field: ${faultyField}]` : "";
+      return new MetaValidationError(
+        `${message}${subcodeStr}${faultyFieldStr}`,
+        code,
+        error_subcode
+      );
     }
 
     // Application request limit
@@ -145,9 +155,15 @@ export class MetaApiErrorHandler {
       return new MetaUserLimitError(message, code, error_subcode);
     }
 
-    // Generic Meta API error
+    // Generic Meta API error — include subcode and faulty field when available
+    const subcodeStr = error_subcode ? ` [subcode: ${error_subcode}]` : "";
+    const rawErrorData = (errorData as any)?.error?.error_data;
+    const faultyField = rawErrorData?.blame_field_specs?.[0]?.[0]
+      ?? rawErrorData?.field
+      ?? null;
+    const faultyFieldStr = faultyField ? ` [field: ${faultyField}]` : "";
     return new MetaApiProcessingError(
-      message,
+      `${message}${subcodeStr}${faultyFieldStr}`,
       undefined,
       code,
       error_subcode,

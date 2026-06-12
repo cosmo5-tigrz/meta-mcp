@@ -32,11 +32,19 @@ export function registerAnalyticsTools(
       breakdowns,
       attribution_windows,
       limit,
+      after,
     }) => {
       try {
+        // Normalize account-level object_id: Meta requires act_ prefix
+        const normalizedObjectId =
+          level === "account" && !object_id.startsWith("act_")
+            ? `act_${object_id}`
+            : object_id;
+
         const params: Record<string, any> = {
           level,
           limit: limit || 25,
+          ...(after ? { after } : {}),
         };
 
         if (date_preset) {
@@ -44,7 +52,7 @@ export function registerAnalyticsTools(
         } else if (time_range) {
           params.time_range = time_range;
         } else {
-          params.date_preset = "last_7d"; // Default to last 7 days
+          params.date_preset = "last_7d";
         }
 
         if (fields && fields.length > 0) {
@@ -55,11 +63,13 @@ export function registerAnalyticsTools(
           params.breakdowns = breakdowns;
         }
 
-        if (attribution_windows && attribution_windows.length > 0) {
-          params.action_attribution_windows = attribution_windows;
-        }
+        // Default to 7d_click to avoid DDA over-counting
+        params.action_attribution_windows =
+          attribution_windows && attribution_windows.length > 0
+            ? attribution_windows
+            : ["7d_click"];
 
-        const result = await metaClient.getInsights(object_id, params);
+        const result = await metaClient.getInsights(normalizedObjectId, params);
 
         const insights = result.data.map((insight) => ({
           date_start: insight.date_start,
@@ -96,12 +106,13 @@ export function registerAnalyticsTools(
             previous_cursor: result.paging?.cursors?.before,
           },
           query_parameters: {
-            object_id,
+            object_id: normalizedObjectId,
             level,
             date_preset,
             time_range,
             fields,
             breakdowns,
+            action_attribution_windows: params.action_attribution_windows,
           },
           total_count: insights.length,
         };
